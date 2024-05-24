@@ -920,7 +920,7 @@ app.get('/api/empresa/cursos/total', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/add-aluno', async (req, res) => {
+app.post('/api/add-user', async (req, res) => {
   const { 
     username, 
     nome, 
@@ -1622,24 +1622,44 @@ app.post('/api/add-aluno', async (req, res) => {
   const { username, nome, sobrenome, email, role, empresa, senha } = req.body;
 
   try {
-    // Gere um hash da senha usando a biblioteca bcrypt com async/await
+    // Gere um hash da senha usando bcrypt-nodejs
     const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(senha, saltRounds);
+    bcrypt.genSalt(saltRounds, (err, salt) => { // Corrigido: usando bcrypt.genSalt
+      if (err) {
+        console.error('Erro ao gerar salt:', err);
+        return res.status(500).json({ success: false, message: 'Erro ao adicionar aluno' });
+      }
 
-    // Conecte-se ao banco de dados PostgreSQL
-    const client = await pool.connect(); // Movendo a conexão para o escopo do try
+      bcrypt.hash(senha, salt, null, (err, hashedPassword) => { // Corrigido: usando bcrypt.hash
+        if (err) {
+          console.error('Erro ao gerar hash da senha:', err);
+          return res.status(500).json({ success: false, message: 'Erro ao adicionar aluno' });
+        }
 
-    try {
-      // Query para inserir o novo aluno no banco de dados (incluindo "empresa")
-      const query = 'INSERT INTO users (username, nome, sobrenome, email, role, empresa, senha) VALUES ($1, $2, $3, $4, $5, $6, $7)';
-      const values = [username, nome, sobrenome, email, role, empresa, hashedPassword];
+        // Conecte-se ao banco de dados PostgreSQL dentro do callback
+        pool.connect(async (err, client, release) => { // Corrigido: usando pool.connect
+          if (err) {
+            console.error('Erro ao conectar ao banco de dados:', err);
+            return res.status(500).json({ success: false, message: 'Erro ao adicionar aluno' });
+          }
 
-      await client.query(query, values);
-      res.json({ success: true, message: 'Aluno adicionado com sucesso!' });
-    } finally {
-      // Libere a conexão com o banco de dados
-      client.release(); // Garantindo que a conexão seja liberada
-    }
+          try {
+            // Query para inserir o novo aluno no banco de dados (incluindo "empresa")
+            const query = 'INSERT INTO users (username, nome, sobrenome, email, role, empresa, senha) VALUES ($1, $2, $3, $4, $5, $6, $7)';
+            const values = [username, nome, sobrenome, email, role, empresa, hashedPassword];
+
+            await client.query(query, values);
+            res.json({ success: true, message: 'Aluno adicionado com sucesso!' });
+          } catch (error) {
+            console.error('Erro ao adicionar aluno:', error);
+            res.status(500).json({ success: false, message: 'Erro ao adicionar aluno' });
+          } finally {
+            // Libere a conexão com o banco de dados
+            release();
+          }
+        });
+      });
+    });
   } catch (error) {
     console.error('Erro ao adicionar aluno:', error);
     res.status(500).json({ success: false, message: 'Erro ao adicionar aluno' });
