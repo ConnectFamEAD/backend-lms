@@ -17,7 +17,7 @@ const pool = new Pool({
 });
 
 app.use(cors({
-  origin: ['http://localhost:3000','https://backend-lms-6n8k.onrender.com', 'https://www.fmatch.com.br'],
+  origin: ['http://localhost:3000','https://backend-lms-6n8k.onrender.com', 'https://www.fmatch.com.br', 'https://connect-ead.vercel.app'],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -1621,17 +1621,25 @@ app.post('/api/comprar-curso', async (req, res) => {
 app.post('/api/add-aluno', async (req, res) => {
   const { username, nome, sobrenome, email, role, empresa, senha } = req.body;
 
-  // Gere um hash da senha usando a biblioteca bcrypt
-  const saltRounds = 10;
-  const hashedPassword = await bcrypt.hash(senha, saltRounds);
-
-  // Query para inserir o novo aluno no banco de dados (incluindo "empresa")
-  const query = 'INSERT INTO users (username, nome, sobrenome, email, role, empresa, senha) VALUES ($1, $2, $3, $4, $5, $6, $7)';
-  const values = [username, nome, sobrenome, email, role, empresa, hashedPassword];
-
   try {
-    await pool.query(query, values);
-    res.json({ success: true, message: 'Aluno adicionado com sucesso!' });
+    // Gere um hash da senha usando a biblioteca bcrypt com async/await
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(senha, saltRounds);
+
+    // Conecte-se ao banco de dados PostgreSQL
+    const client = await pool.connect(); // Movendo a conexão para o escopo do try
+
+    try {
+      // Query para inserir o novo aluno no banco de dados (incluindo "empresa")
+      const query = 'INSERT INTO users (username, nome, sobrenome, email, role, empresa, senha) VALUES ($1, $2, $3, $4, $5, $6, $7)';
+      const values = [username, nome, sobrenome, email, role, empresa, hashedPassword];
+
+      await client.query(query, values);
+      res.json({ success: true, message: 'Aluno adicionado com sucesso!' });
+    } finally {
+      // Libere a conexão com o banco de dados
+      client.release(); // Garantindo que a conexão seja liberada
+    }
   } catch (error) {
     console.error('Erro ao adicionar aluno:', error);
     res.status(500).json({ success: false, message: 'Erro ao adicionar aluno' });
