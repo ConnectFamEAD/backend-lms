@@ -1064,40 +1064,35 @@ app.post('/api/Updateempresas', async (req, res) => {
   const { cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha } = req.body;
 
   try {
-    // **Correção:** Usando bcrypt-nodejs.hash com callback
-    bcrypt.hash(senha, 10, (err, hashedPassword) => { 
-      if (err) {
-        console.error('Erro ao gerar hash da senha:', err);
-        return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-      }
-
-      // Continuar a lógica de inserção no banco de dados DENTRO do callback
-      pool.connect(async (err, client, release) => {
-        if (err) {
-          console.error('Erro ao conectar ao banco de dados:', err);
-          return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-        }
-
-        try {
-          const query = `
-            INSERT INTO empresas (cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-          `;
-          const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, hashedPassword];
-
-          await client.query(query, values);
-          res.json({ success: true, message: 'Empresa cadastrada com sucesso!' });
-        } catch (error) {
-          console.error('Erro ao cadastrar empresa:', error);
-          res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-        } finally {
-          release();
-        }
+    // 1. Gerar o hash da senha usando bcrypt-nodejs com async/await
+    const saltRounds = 10;
+    const hashedPassword = await new Promise((resolve, reject) => {
+      bcrypt.hash(senha, saltRounds, (err, hash) => {
+        if (err) reject(err);
+        else resolve(hash);
       });
-    }); 
+    });
+
+    // 2. Conectar ao banco de dados
+    const client = await pool.connect();
+
+    // 3. Inserir os dados da empresa (incluindo a senha criptografada)
+    const query = `
+      INSERT INTO empresas (cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha, users)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    `;
+    const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, hashedPassword, '{}']; // Certifique-se de que 'users' seja um array vazio ou um objeto JSON válido
+    await client.query(query, values);
+
+    // 4. Responder com sucesso
+    res.json({ success: true, message: 'Empresa cadastrada com sucesso!' });
+
   } catch (error) {
     console.error('Erro ao cadastrar empresa:', error);
     res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
+  } finally {
+    // 5. Liberar a conexão com o banco de dados (se estiver conectado)
+    if (client) client.release();
   }
 });
 // Rota para buscar todas as empresas
