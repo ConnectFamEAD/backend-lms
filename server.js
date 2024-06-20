@@ -1061,8 +1061,10 @@ app.put('/api/user/profileEdit', async (req, res) => {
 });
 
 app.post('/api/Updateempresas', (req, res) => {
+  
   const { cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha } = req.body;
-
+  console.log("Dados recebidos:", req.body);
+  
   try {
     // 1. Gerar o hash da senha usando bcrypt-nodejs com callback
     const saltRounds = 10;
