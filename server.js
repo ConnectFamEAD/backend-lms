@@ -1059,56 +1059,47 @@ app.put('/api/user/profileEdit', async (req, res) => {
     res.status(500).json({ success: false, message: 'Erro interno do servidor ao atualizar perfil.' });
   }
 });
-
 app.post('/api/Updateempresas', (req, res) => {
-  
   const { cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha } = req.body;
-  console.log("Dados recebidos:", req.body);
-  
-  try {
-    // 1. Gerar o hash da senha usando bcrypt-nodejs com callback
-    const saltRounds = 10;
-    bcrypt.hash(senha, saltRounds, (err, hashedPassword) => {
+
+  bcrypt.hash(senha, 10, (err, hashedPassword) => {
+    if (err) {
+      console.error('Erro ao gerar hash da senha:', err);
+      return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
+    }
+
+    pool.connect((err, client, release) => {
       if (err) {
-        console.error('Erro ao gerar hash da senha:', err);
+        console.error('Erro ao conectar ao banco de dados:', err);
         return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
       }
 
-      // 2. Conectar ao banco de dados DENTRO do callback do bcrypt.hash
-      pool.connect((err, client, release) => {
-        if (err) {
-          console.error('Erro ao conectar ao banco de dados:', err);
-          return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-        }
+      try {
+        const query = `
+          INSERT INTO empresas (cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha, users)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        `;
+        const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, hashedPassword, '{}'];
 
-        try {
-          // 3. Inserir os dados da empresa (incluindo a senha criptografada)
-          const query = `
-            INSERT INTO empresas (cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha, users)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-          `;
-          const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, hashedPassword, '{}']; 
-          client.query(query, values, (err, result) => {
-            release(); // Liberar a conexão no callback da query
-            if (err) {
-              console.error('Erro ao cadastrar empresa:', err);
-              return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-            }
+        // **Correção:** Chamar client.query com callback
+        client.query(query, values, (err, result) => { 
+          if (err) {
+            console.error('Erro ao cadastrar empresa:', err);
+            release(); // Liberar a conexão em caso de erro
+            return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
+          }
 
-            // 4. Responder com sucesso
-            res.json({ success: true, message: 'Empresa cadastrada com sucesso!' });
-          });
-        } catch (error) {
-          console.error('Erro ao cadastrar empresa:', error);
-          res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-        }
-      });
+          release(); // Liberar a conexão após a consulta
+          res.json({ success: true, message: 'Empresa cadastrada com sucesso!' });
+        });
+
+      } catch (error) {
+        console.error('Erro ao cadastrar empresa:', error);
+        release(); // Liberar a conexão em caso de erro
+        res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
+      }
     });
-
-  } catch (error) {
-    console.error('Erro ao cadastrar empresa:', error);
-    res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-  }
+  });
 });
 // Rota para buscar todas as empresas
 app.get('/api/empresas', async (req, res) => {
