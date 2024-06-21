@@ -1065,14 +1065,14 @@ app.post('/api/Updateempresas', (req, res) => {
 
   const saltRounds = 10;
 
-  // Callback do bcrypt.genSalt é crucial!
-  bcrypt.genSalt(saltRounds, (err, salt) => { 
+  bcrypt.genSalt(saltRounds, (err, salt) => {
     if (err) {
       console.error('Erro ao gerar salt:', err);
       return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
     }
 
-    bcrypt.hash(senha, salt, (err, hashedPassword) => {
+    // Correção: Ordem dos argumentos no bcrypt.hash
+    bcrypt.hash(senha, salt, null, (err, hashedPassword) => { 
       if (err) {
         console.error('Erro ao gerar hash da senha:', err);
         return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
