@@ -1071,8 +1071,11 @@ app.post('/api/Updateempresas', async (req, res) => {
         return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
       }
 
+      let client; // Declarando 'client' aqui
+
       try {
-        const client = await pool.connect();
+        client = await pool.connect(); // Aguardando a conexão
+
         const query = `
           INSERT INTO empresas (cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
@@ -1085,8 +1088,9 @@ app.post('/api/Updateempresas', async (req, res) => {
         console.error('Erro ao cadastrar empresa:', error);
         res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
       } finally {
-        //  Movido para fora do callback do bcrypt.hash
-        client.release(); 
+        if (client) { // Verificando se 'client' está definido
+          client.release();
+        }
       }
     });
   } catch (error) {
