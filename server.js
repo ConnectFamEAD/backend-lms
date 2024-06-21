@@ -1060,43 +1060,40 @@ app.put('/api/user/profileEdit', async (req, res) => {
   }
 });
 
-app.post('/api/Updateempresas', async (req, res) => {
+app.post('/api/Updateempresas', (req, res) => {
   const { cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha } = req.body;
 
-  try {
-    const saltRounds = 10;
-    bcrypt.hash(senha, saltRounds, async (err, hashedPassword) => {
+  const saltRounds = 10;
+  bcrypt.hash(senha, saltRounds, (err, hashedPassword) => {
+    if (err) {
+      console.error('Erro ao gerar hash da senha:', err);
+      return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
+    }
+
+    pool.connect((err, client, release) => {
       if (err) {
-        console.error('Erro ao gerar hash da senha:', err);
+        console.error('Erro ao conectar ao banco de dados:', err);
         return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
       }
 
-      let client; // Declarando 'client' aqui
+      const query = `
+        INSERT INTO empresas (cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      `;
+      const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, hashedPassword];
 
-      try {
-        client = await pool.connect(); // Aguardando a conexão
+      client.query(query, values, (err, result) => {
+        release(); // Libera a conexão no callback da query
 
-        const query = `
-          INSERT INTO empresas (cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        `;
-        const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, hashedPassword];
-
-        await client.query(query, values);
-        res.json({ success: true, message: 'Empresa cadastrada com sucesso!' });
-      } catch (error) {
-        console.error('Erro ao cadastrar empresa:', error);
-        res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-      } finally {
-        if (client) { // Verificando se 'client' está definido
-          client.release();
+        if (err) {
+          console.error('Erro ao cadastrar empresa:', err);
+          return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
         }
-      }
+
+        res.json({ success: true, message: 'Empresa cadastrada com sucesso!' });
+      });
     });
-  } catch (error) {
-    console.error('Erro ao cadastrar empresa:', error);
-    res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-  }
+  });
 });
 
 // Rota para buscar todas as empresas
