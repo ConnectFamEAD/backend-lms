@@ -1064,39 +1064,30 @@ app.post('/api/Updateempresas', async (req, res) => {
   const { cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha } = req.body;
 
   try {
-    // Gere um hash da senha usando bcrypt
     const saltRounds = 10;
-
-    // Correção: Usando bcrypt.hash com callback
-    bcrypt.hash(senha, saltRounds, (err, hashedPassword) => { 
+    bcrypt.hash(senha, saltRounds, async (err, hashedPassword) => {
       if (err) {
         console.error('Erro ao gerar hash da senha:', err);
         return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
       }
 
-      // Continuação da lógica após gerar o hash
-      pool.connect(async (err, client, release) => {
-        if (err) {
-          console.error('Erro ao conectar ao banco de dados:', err);
-          return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-        }
+      try {
+        const client = await pool.connect();
+        const query = `
+          INSERT INTO empresas (cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        `;
+        const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, hashedPassword];
 
-        try {
-          const query = `
-            INSERT INTO empresas (cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-          `;
-          const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, hashedPassword];
-
-          await client.query(query, values);
-          res.json({ success: true, message: 'Empresa cadastrada com sucesso!' });
-        } catch (error) {
-          console.error('Erro ao cadastrar empresa:', error);
-          res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-        } finally {
-          release();
-        }
-      });
+        await client.query(query, values);
+        res.json({ success: true, message: 'Empresa cadastrada com sucesso!' });
+      } catch (error) {
+        console.error('Erro ao cadastrar empresa:', error);
+        res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
+      } finally {
+        //  Movido para fora do callback do bcrypt.hash
+        client.release(); 
+      }
     });
   } catch (error) {
     console.error('Erro ao cadastrar empresa:', error);
