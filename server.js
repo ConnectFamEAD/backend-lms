@@ -30,7 +30,7 @@ app.use(express.json());
 const mercadopago = require("mercadopago");
 // APP_USR-8063147763333109-040612-2e2f18a4e1b39856373093e03bccce81-1759639890 - TEST-8063147763333109-040612-8f949eff9bb8bd0eb071d55bb23e6497-1759639890
 mercadopago.configure({
-  access_token: "TEST-8063147763333109-040612-8f949eff9bb8bd0eb071d55bb23e6497-1759639890",
+  access_token: "APP_USR-8063147763333109-040612-2e2f18a4e1b39856373093e03bccce81-1759639890",
 });
 app.get('/api/cursos/status/:userId/:cursoId', async (req, res) => {
   const { userId, cursoId } = req.params;
@@ -1060,55 +1060,32 @@ app.put('/api/user/profileEdit', async (req, res) => {
   }
 });
 
-app.post('/api/Updateempresas', (req, res) => {
-  
+
+app.post('/api/Updateempresas', async (req, res) => {
   const { cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha } = req.body;
-  console.log("Dados recebidos:", req.body);
+
   try {
-    // 1. Gerar o hash da senha usando bcrypt-nodejs com callback
+    // Gere um hash da senha usando bcrypt
     const saltRounds = 10;
-    bcrypt.hash(senha, saltRounds, (err, hashedPassword) => {
-      if (err) {
-        console.error('Erro ao gerar hash da senha:', err);
-        return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-      }
+    const hashedPassword = await bcrypt.hash(senha, saltRounds);
 
-      // 2. Conectar ao banco de dados DENTRO do callback do bcrypt.hash
-      pool.connect((err, client, release) => {
-        if (err) {
-          console.error('Erro ao conectar ao banco de dados:', err);
-          return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-        }
+    const client = await pool.connect();
+    const query = `
+      INSERT INTO empresas (cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    `;
+    const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, hashedPassword];
 
-        try {
-          // 3. Inserir os dados da empresa (incluindo a senha criptografada)
-          const query = `
-          INSERT INTO empresas (cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha) 
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        `;
-        const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, hashedPassword];
-          client.query(query, values, (err, result) => {
-            release(); // Liberar a conexão no callback da query
-            if (err) {
-              console.error('Erro ao cadastrar empresa:', err);
-              return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-            }
+    await client.query(query, values);
+    client.release();
 
-            // 4. Responder com sucesso
-            res.json({ success: true, message: 'Empresa cadastrada com sucesso!' });
-          });
-        } catch (error) {
-          console.error('Erro ao cadastrar empresa:', error);
-          res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-        }
-      });
-    });
-
+    res.json({ success: true, message: 'Empresa cadastrada com sucesso!' });
   } catch (error) {
     console.error('Erro ao cadastrar empresa:', error);
     res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
   }
 });
+
 // Rota para buscar todas as empresas
 app.get('/api/empresas', async (req, res) => {
   try {
