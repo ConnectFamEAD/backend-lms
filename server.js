@@ -1064,7 +1064,7 @@ app.post('/api/Updateempresas', (req, res) => {
   const { cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha } = req.body;
 
   const saltRounds = 10;
-  bcrypt.hash(senha, saltRounds, (err, hashedPassword) => {
+  bcrypt.hash(senha, saltRounds, (err, hashedPassword) => { // Callback adicionado aqui
     if (err) {
       console.error('Erro ao gerar hash da senha:', err);
       return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
@@ -1083,7 +1083,7 @@ app.post('/api/Updateempresas', (req, res) => {
       const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, hashedPassword];
 
       client.query(query, values, (err, result) => {
-        release(); // Libera a conexão no callback da query
+        release(); 
 
         if (err) {
           console.error('Erro ao cadastrar empresa:', err);
