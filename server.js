@@ -825,46 +825,41 @@ app.post("/api/pagamento/notificacao", async (req, res) => {
   try {
     const payment = await mercadopago.payment.findById(data.id);
     const externalReference = payment.body.external_reference;
-    const compraIds = externalReference.split(';'); // Separar os IDs por ponto e vírgula
+    const compraIds = externalReference.split('-'); // Separar os IDs por hífen
     const paymentStatus = payment.body.status;
 
-    await Promise.all(compraIds.map(async compraIdString => {
-      // Dividir a string compraIdString em IDs individuais, caso contenha vírgulas
-      const compraIdsIndividuais = compraIdString.split(',');
-  
-      await Promise.all(compraIdsIndividuais.map(async compraId => {
-        const newStatus = paymentStatus === 'approved' ? 'aprovado' : 'reprovado';
-  
-        // Buscar userId e data_compra associado a compraId
-        const compraInfo = await pool.query('SELECT user_id, created_at, curso_id FROM compras_cursos WHERE id = $1', [compraId]);
+    // Iterar sobre cada compraId
+    for (const compraId of compraIds) { 
+      const newStatus = paymentStatus === 'approved' ? 'aprovado' : 'reprovado';
+
+      // Buscar userId e data_compra associado a compraId
+      const compraInfo = await pool.query('SELECT user_id, created_at FROM compras_cursos WHERE id = $1', [compraId]);
+      
+      if (compraInfo.rows.length > 0) { // Verificar se a compra foi encontrada
         const userId = compraInfo.rows[0].user_id;
         const dataCompra = compraInfo.rows[0].created_at;
-        const cursoId = compraInfo.rows[0].curso_id; // Obter o cursoId
-  
+
         await pool.query('UPDATE compras_cursos SET status = $1 WHERE id = $2', [newStatus, compraId]);
-  
+
         if (newStatus === 'aprovado') {
-          // Buscar valor_pago da tabela cursos
-          const valorPagoResult = await pool.query('SELECT valor_10d FROM cursos WHERE id = $1', [cursoId]);
-          const valorPago = valorPagoResult.rows[0].valor_10d;
-  
           await pool.query(`
-            INSERT INTO historico (compra_id, user_id, curso_id, status, data_compra, data_aprovacao, periodo, valor_pago) 
-            VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7) 
-            ON CONFLICT (compra_id) 
-            DO UPDATE SET status = $4, data_aprovacao = NOW(), periodo = $6, valor_pago = $7;
-          `, [compraId, userId, cursoId, newStatus, dataCompra, '10d', valorPago]);
+            INSERT INTO historico (compra_id, user_id, status, data_compra, data_aprovacao) 
+            VALUES ($1, $2, $3, $4, NOW()) 
+            ON CONFLICT (compra_id) DO UPDATE SET status = $3, data_aprovacao = NOW();
+          `, [compraId, userId, newStatus, dataCompra]);
         }
-      }));
-    }));
-  
+      } else {
+        console.error(`Compra com ID ${compraId} não encontrada.`);
+        // Lógica para lidar com a compra não encontrada, se necessário
+      }
+    }
+
     res.send("Notificação processada com sucesso.");
   } catch (error) {
     console.error("Erro ao processar notificação:", error);
     res.status(500).send("Erro interno do servidor");
   }
 });
-
 app.get('/api/empresa/compras', authenticateToken, async (req, res) => {
   const empresaNome = req.user.username;
 
