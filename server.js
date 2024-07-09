@@ -825,32 +825,31 @@ app.post("/api/pagamento/notificacao", async (req, res) => {
   try {
     const payment = await mercadopago.payment.findById(data.id);
     const externalReference = payment.body.external_reference;
-    const compraIds = externalReference.split('-'); // Separar os IDs por hífen
+    const compraIds = externalReference.split('-'); 
     const paymentStatus = payment.body.status;
 
-    // Iterar sobre cada compraId
     for (const compraId of compraIds) { 
       const newStatus = paymentStatus === 'approved' ? 'aprovado' : 'reprovado';
 
-      // Buscar userId e data_compra associado a compraId
-      const compraInfo = await pool.query('SELECT user_id, created_at FROM compras_cursos WHERE id = $1', [compraId]);
+      // Buscar userId, data_compra E curso_id
+      const compraInfo = await pool.query('SELECT user_id, created_at, curso_id FROM compras_cursos WHERE id = $1', [compraId]);
       
-      if (compraInfo.rows.length > 0) { // Verificar se a compra foi encontrada
+      if (compraInfo.rows.length > 0) { 
         const userId = compraInfo.rows[0].user_id;
         const dataCompra = compraInfo.rows[0].created_at;
+        const cursoId = compraInfo.rows[0].curso_id; // Obter o cursoId
 
         await pool.query('UPDATE compras_cursos SET status = $1 WHERE id = $2', [newStatus, compraId]);
 
         if (newStatus === 'aprovado') {
           await pool.query(`
-            INSERT INTO historico (compra_id, user_id, status, data_compra, data_aprovacao) 
-            VALUES ($1, $2, $3, $4, NOW()) 
-            ON CONFLICT (compra_id) DO UPDATE SET status = $3, data_aprovacao = NOW();
-          `, [compraId, userId, newStatus, dataCompra]);
+            INSERT INTO historico (compra_id, user_id, curso_id, status, data_compra, data_aprovacao) 
+            VALUES ($1, $2, $3, $4, $5, NOW()) 
+            ON CONFLICT (compra_id) DO UPDATE SET status = $4, data_aprovacao = NOW();
+          `, [compraId, userId, cursoId, newStatus, dataCompra]); // Incluir cursoId aqui
         }
       } else {
         console.error(`Compra com ID ${compraId} não encontrada.`);
-        // Lógica para lidar com a compra não encontrada, se necessário
       }
     }
 
