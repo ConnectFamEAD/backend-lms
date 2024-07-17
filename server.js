@@ -742,10 +742,10 @@ app.post("/api/checkout/pacote", authenticateToken, async (req, res) => {
 
     // 3. Criar um registro de compra para cada aluno e cada curso
     const comprasRegistradas = await Promise.all(alunoIds.map(async alunoId => {
-      return Promise.all(items.map(async item => { // Iterar sobre o array 'items'
+      return Promise.all(items.map(async item => {
         const { rows } = await pool.query(
           "INSERT INTO compras_cursos (user_id, curso_id, status, periodo, data_compra) VALUES ($1, $2, 'pendente', $3, NOW()) RETURNING id",
-          [alunoId, item.id, item.periodo] // Usar item.id aqui
+          [alunoId, item.id, item.periodo]
         );
         return rows[0].id; 
       }));
@@ -764,7 +764,8 @@ app.post("/api/checkout/pacote", authenticateToken, async (req, res) => {
     const response = await mercadopago.preferences.create(preference);
 
     // 5. Registrar os IDs das compras no external_reference
-    // ... (seu código para registrar os IDs das compras) ...
+    const compraIdsString = comprasRegistradas.flat().join(';'); // Junta todos os IDs em uma string
+    preference.external_reference = compraIdsString; // Atualiza o external_reference
 
     // 6. Enviar a resposta
     res.json({ preferenceId: response.body.id, comprasRegistradas });
