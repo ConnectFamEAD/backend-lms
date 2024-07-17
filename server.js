@@ -818,15 +818,17 @@ const enviarEmailConfirmacaoCompra = async (email, itensCompra, total, dataCompr
     console.error('Erro ao enviar email de confirmação:', error);
   }
 };
+
 app.post("/api/pagamento/notificacao", async (req, res) => {
   const { data } = req.body;
 
   try {
     const payment = await mercadopago.payment.findById(data.id);
     const externalReference = payment.body.external_reference;
-    const compraIds = externalReference.split('-'); 
+    const compraIds = externalReference.split(';'); // Separa os IDs em um array
     const paymentStatus = payment.body.status;
 
+    // Itera sobre cada ID de compra
     for (const compraId of compraIds) { 
       const newStatus = paymentStatus === 'approved' ? 'aprovado' : 'reprovado';
 
@@ -836,7 +838,7 @@ app.post("/api/pagamento/notificacao", async (req, res) => {
       if (compraInfo.rows.length > 0) { 
         const userId = compraInfo.rows[0].user_id;
         const dataCompra = compraInfo.rows[0].created_at;
-        const cursoId = compraInfo.rows[0].curso_id; // Obter o cursoId
+        const cursoId = compraInfo.rows[0].curso_id;
 
         await pool.query('UPDATE compras_cursos SET status = $1 WHERE id = $2', [newStatus, compraId]);
 
@@ -845,7 +847,7 @@ app.post("/api/pagamento/notificacao", async (req, res) => {
             INSERT INTO historico (compra_id, user_id, curso_id, status, data_compra, data_aprovacao) 
             VALUES ($1, $2, $3, $4, $5, NOW()) 
             ON CONFLICT (compra_id) DO UPDATE SET status = $4, data_aprovacao = NOW();
-          `, [compraId, userId, cursoId, newStatus, dataCompra]); // Incluir cursoId aqui
+          `, [compraId, userId, cursoId, newStatus, dataCompra]); 
         }
       } else {
         console.error(`Compra com ID ${compraId} não encontrada.`);
@@ -858,6 +860,7 @@ app.post("/api/pagamento/notificacao", async (req, res) => {
     res.status(500).send("Erro interno do servidor");
   }
 });
+
 app.get('/api/empresa/compras', authenticateToken, async (req, res) => {
   const empresaNome = req.user.username;
 
