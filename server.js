@@ -732,12 +732,9 @@ app.post("/api/checkout", async (req, res) => {
 
 app.post("/api/checkout/pacote", authenticateToken, async (req, res) => { 
   const { items, userId } = req.body;
-  const empresaNome = req.user.username; // Obter o nome da empresa do token
+  const empresaNome = req.user.username;
 
   try {
-    // 1. Obter os IDs dos cursos do item 'Pacote de Cursos'
-    const cursoIds = items[0].id;
-
     // 2. Obter os userIds dos alunos da empresa
     const alunosQuery = "SELECT id FROM users WHERE empresa = $1 AND role = 'Aluno'";
     const { rows: alunos } = await pool.query(alunosQuery, [empresaNome]);
@@ -745,28 +742,29 @@ app.post("/api/checkout/pacote", authenticateToken, async (req, res) => {
 
     // 3. Criar um registro de compra para cada aluno e cada curso
     const comprasRegistradas = await Promise.all(alunoIds.map(async alunoId => {
-      return Promise.all(cursoIds.map(async cursoId => {
+      return Promise.all(items.map(async item => { // Iterar sobre o array 'items'
         const { rows } = await pool.query(
           "INSERT INTO compras_cursos (user_id, curso_id, status, periodo, data_compra) VALUES ($1, $2, 'pendente', $3, NOW()) RETURNING id",
-          [alunoId, cursoId, '10d'] // Substitua '10d' pelo período correto
+          [alunoId, item.id, item.periodo] // Usar item.id aqui
         );
-        return rows[0].id; // Retorna o ID da compra
+        return rows[0].id; 
       }));
     }));
 
     // 4. Criar a preferência do Mercado Pago
     const preference = {
-      items: [
-        {
-          title: items[0].title,
-          unit_price: items[0].unit_price,
-          quantity: 1,
-        }
-      ],
-      external_reference: comprasRegistradas.flat().join(';'),
+      items: items.map(item => ({
+        title: item.title,
+        unit_price: item.unit_price,
+        quantity: 1,
+      })),
+      external_reference: comprasRegistradas.flat().join(';'), // Ajustar o separador se necessário
     };
 
     const response = await mercadopago.preferences.create(preference);
+
+    // 5. Registrar os IDs das compras no external_reference
+    // ... (seu código para registrar os IDs das compras) ...
 
     // 6. Enviar a resposta
     res.json({ preferenceId: response.body.id, comprasRegistradas });
