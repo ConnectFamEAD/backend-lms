@@ -731,16 +731,11 @@ app.post("/api/checkout", async (req, res) => {
 });
 
 app.post("/api/checkout/pacote", authenticateToken, async (req, res) => { 
-  const { items, userId } = req.body;
+  const { items, userId, alunoIds } = req.body; // Receber alunoIds do frontend
   const empresaNome = req.user.username;
 
   try {
-    // 2. Obter os userIds dos alunos da empresa
-    const alunosQuery = "SELECT id FROM users WHERE empresa = $1 AND role = 'Aluno'";
-    const { rows: alunos } = await pool.query(alunosQuery, [empresaNome]);
-    const alunoIds = alunos.map(aluno => aluno.id);
-
-    // 3. Criar um registro de compra para cada aluno e cada curso
+    // 3. Criar um registro de compra para cada aluno SELECIONADO e cada curso
     const comprasRegistradas = await Promise.all(alunoIds.map(async alunoId => {
       return Promise.all(items.map(async item => {
         const { rows } = await pool.query(
@@ -758,10 +753,11 @@ app.post("/api/checkout/pacote", authenticateToken, async (req, res) => {
         unit_price: item.unit_price,
         quantity: 1,
       })),
-      external_reference: comprasRegistradas.flat().join(';'), // Ajustar o separador se necessário
+      external_reference: comprasRegistradas.flat().join(';'),
     };
 
     const response = await mercadopago.preferences.create(preference);
+
 
     // 5. Registrar os IDs das compras no external_reference
     const compraIdsString = comprasRegistradas.flat().join(';'); // Junta todos os IDs em uma string
