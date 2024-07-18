@@ -1615,14 +1615,18 @@ app.get('/api/alunos/empresa/:empresaNome/password-changed/count', async (req, r
 
 app.post('/api/comprar-curso', async (req, res) => {
   const { userId, cursoId } = req.body;
-  
-  const query = 'INSERT INTO compras_cursos (user_id, curso_id) VALUES ($1, $2)';
+
+  const query =
+    'INSERT INTO compras_cursos (user_id, curso_id) VALUES ($1, $2) RETURNING id'; // Adicione RETURNING id
   try {
     const client = await pool.connect();
-    await client.query(query, [userId, cursoId]);
+    const result = await client.query(query, [userId, cursoId]); // Armazene o resultado da query
     client.release();
 
-    res.json({ success: true, message: 'Curso comprado com sucesso!' });
+    console.log("Resultado da Query:", result.rows); // Verifique o resultado da query no console
+
+    // Retorne o ID da compra criada em um array
+    res.json({ success: true, message: 'Curso comprado com sucesso!', compraId: [result.rows[0].id] }); 
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Erro ao comprar curso' });
