@@ -1599,24 +1599,26 @@ app.get('/api/alunos/empresa/:empresaNome/password-changed/count', async (req, r
 });
 
 app.post('/api/comprar-curso', async (req, res) => {
-  const { userId, cursoId, periodo } = req.body; // Receber o período na requisição
+  const { userId, cursoId, periodo } = req.body;
 
+  // Modificar a query para incluir o status 'pendente'
   const query =
-    'INSERT INTO compras_cursos (user_id, curso_id, periodo) VALUES ($1, $2, $3) RETURNING id'; // Adicionar periodo na query
+    'INSERT INTO compras_cursos (user_id, curso_id, periodo, status) VALUES ($1, $2, $3, $4) RETURNING id'; 
   try {
     const client = await pool.connect();
-    const result = await client.query(query, [userId, cursoId, periodo]); // Incluir periodo nos valores
+    // Incluir 'pendente' nos valores da query
+    const result = await client.query(query, [userId, cursoId, periodo, 'pendente']); 
     client.release();
 
-    console.log("Resultado da Query:", result.rows); 
+    console.log("Resultado da Query:", result.rows);
 
-    // Retorne o ID da compra criada em um array
-    res.json({ success: true, message: 'Curso comprado com sucesso!', compraId: [result.rows[0].id] }); 
+    res.json({ success: true, message: 'Curso comprado com sucesso!', compraId: [result.rows[0].id] });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Erro ao comprar curso' });
   }
 });
+
 app.post('/api/add-aluno', async (req, res) => {
   const { username, nome, sobrenome, email, role, empresa, senha } = req.body;
 
