@@ -735,15 +735,12 @@ app.post("/api/checkout/pacote", authenticateToken, async (req, res) => {
   const empresaNome = req.user.username;
 
   try {
-    // 3. Criar um registro de compra para cada aluno SELECIONADO e cada curso (não é mais necessário)
-    // Esse passo foi removido pois a criação das compras já foi feita no frontend
-
     // 4. Criar a preferência do Mercado Pago
     const preference = {
       items: items.map(item => ({
         title: item.title,
         unit_price: item.unit_price,
-        quantity: 1,
+        quantity: item.quantity, // Usar a quantidade enviada pelo frontend
       })),
       external_reference: alunoIds.join(';'), // Usando alunoIds, que são os IDs das compras
     };
