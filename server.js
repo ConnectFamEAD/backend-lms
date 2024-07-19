@@ -731,20 +731,12 @@ app.post("/api/checkout", async (req, res) => {
 });
 
 app.post("/api/checkout/pacote", authenticateToken, async (req, res) => { 
-  const { items, userId, alunoIds } = req.body; // Receber alunoIds do frontend
+  const { items, userId, alunoIds } = req.body; // Recebendo alunoIds que agora são os IDs das compras
   const empresaNome = req.user.username;
 
   try {
-    // 3. Criar um registro de compra para cada aluno SELECIONADO e cada curso
-    const comprasRegistradas = await Promise.all(alunoIds.map(async alunoId => {
-      return Promise.all(items.map(async item => {
-        const { rows } = await pool.query(
-          "INSERT INTO compras_cursos (user_id, curso_id, status, periodo, data_compra) VALUES ($1, $2, 'pendente', $3, NOW()) RETURNING id",
-          [alunoId, item.id, item.periodo]
-        );
-        return rows[0].id; 
-      }));
-    }));
+    // 3. Criar um registro de compra para cada aluno SELECIONADO e cada curso (não é mais necessário)
+    // Esse passo foi removido pois a criação das compras já foi feita no frontend
 
     // 4. Criar a preferência do Mercado Pago
     const preference = {
@@ -753,18 +745,13 @@ app.post("/api/checkout/pacote", authenticateToken, async (req, res) => {
         unit_price: item.unit_price,
         quantity: 1,
       })),
-      external_reference: comprasRegistradas.flat().join(';'),
+      external_reference: alunoIds.join(';'), // Usando alunoIds, que são os IDs das compras
     };
 
     const response = await mercadopago.preferences.create(preference);
 
-
-    // 5. Registrar os IDs das compras no external_reference
-    const compraIdsString = comprasRegistradas.flat().join(';'); // Junta todos os IDs em uma string
-    preference.external_reference = compraIdsString; // Atualiza o external_reference
-
     // 6. Enviar a resposta
-    res.json({ preferenceId: response.body.id, comprasRegistradas });
+    res.json({ preferenceId: response.body.id, comprasRegistradas: alunoIds }); // Retornando os IDs das compras
   } catch (error) {
     console.error("Erro ao criar a preferência de pagamento:", error);
     res.status(500).json({ error: error.toString() });
