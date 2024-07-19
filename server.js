@@ -1816,8 +1816,9 @@ app.get('/api/cursos-compra/', authenticateToken, async (req, res) => {
 app.get('/api/cursos-comprados/', authenticateToken, async (req, res) => {
   const userId = req.user.userId;
 
+  // Modificar a query para incluir cc.periodo
   const query = `
-    SELECT c.*, cc.data_inicio_acesso, cc.data_fim_acesso, pc.acessos_pos_conclusao
+    SELECT c.*, cc.data_inicio_acesso, cc.data_fim_acesso, pc.acessos_pos_conclusao, cc.periodo
     FROM cursos c
     INNER JOIN compras_cursos cc ON c.id = cc.curso_id
     LEFT JOIN progresso_cursos pc ON cc.user_id = pc.user_id AND cc.curso_id = pc.curso_id
