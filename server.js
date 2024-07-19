@@ -880,11 +880,12 @@ app.get('/api/empresa/cursos/total', authenticateToken, async (req, res) => {
   const empresaNome = req.user.username;
 
   try {
+    // Consulta SQL ajustada para contar cursos distintos comprados por alunos da empresa
     const query = `
       SELECT COUNT(DISTINCT cc.curso_id) AS total_cursos
       FROM compras_cursos cc
       JOIN users u ON cc.user_id = u.id
-      WHERE u.empresa = $1 AND cc.status = 'aprovado'
+      WHERE u.empresa = $1 AND cc.status = 'aprovado';
     `;
     const { rows } = await pool.query(query, [empresaNome]);
     const totalCursos = rows[0].total_cursos;
