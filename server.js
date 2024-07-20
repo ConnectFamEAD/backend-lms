@@ -1457,99 +1457,117 @@ app.get('/api/validateToken', authenticateToken, (req, res) => {
   });
 });
 
+// Função auxiliar para promisificar bcrypt.compare
+function comparePasswords(senha, hash) {
+  return new Promise((resolve, reject) => {
+    bcrypt.compare(senha, hash, (err, result) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(result);
+      }
+    });
+  });
+}
+
 app.post("/api/user/login", async (req, res) => {
   const { Email, senha } = req.body;
-  console.log("Dados recebidos:", Email, senha); // Log para verificar os dados recebidos
+  console.log("Dados recebidos:", Email, senha);
 
   if (!Email || !senha) {
-    console.log("Dados incompletos."); // Log para verificar se os dados estão incompletos
+    console.log("Dados incompletos.");
     return res.status(400).json({ success: false, message: 'Dados incompletos.' });
   }
 
   try {
-    console.log("Iniciando processo de login..."); // Log para indicar o início do processo
-    // 1. Verificar na tabela 'users'
+    console.log("Iniciando processo de login...");
     const userQuery = "SELECT * FROM users WHERE email = $1 OR username = $1";
     const client = await pool.connect();
     const userResults = await client.query(userQuery, [Email]);
-    console.log("Resultados da consulta 'users':", userResults.rows); // Log dos resultados da consulta
+    console.log("Resultados da consulta 'users':", userResults.rows);
 
     if (userResults.rows.length > 0) {
       const user = userResults.rows[0];
-      console.log("Usuário encontrado:", user); // Log do usuário encontrado
+      console.log("Usuário encontrado:", user);
 
-      // Usando bcrypt-nodejs para comparar senhas
-      bcrypt.compare(senha, user.senha, (err, senhaValida) => {
-        if (err) {
-          console.error("Erro ao comparar senhas:", err); // Log do erro de comparação
-          return res.status(500).json({ success: false, message: 'Erro interno do servidor' });
-        }
-
-        console.log("Senha válida:", senhaValida); // Log do resultado da comparação
+      try {
+        // Usar a função promisificada comparePasswords
+        const senhaValida = await comparePasswords(senha, user.senha);
+        console.log("Senha válida:", senhaValida);
 
         if (senhaValida) {
+          // Obter a empresa do usuário (se houver)
+          const empresaQuery = "SELECT empresa FROM users WHERE id = $1";
+          const empresaResult = await client.query(empresaQuery, [user.id]);
+          const empresa = empresaResult.rows.length > 0 ? empresaResult.rows[0].empresa : null;
+
           // Login bem-sucedido como usuário normal
-          const token = jwt.sign({ userId: user.id, role: user.role, username: user.username }, jwtSecret, { expiresIn: '10h' });
-          console.log("Token gerado:", token); // Log do token gerado
+          const token = jwt.sign({ userId: user.id, role: user.role, username: user.username, empresa: empresa }, jwtSecret, { expiresIn: '10h' });
+          console.log("Token gerado:", token);
           return res.json({
             success: true,
             message: 'Login bem-sucedido!',
             token: token,
             username: user.username,
             userId: user.id,
-            role: user.role
+            role: user.role,
+            empresa: empresa // Incluir a empresa na resposta
           });
         } else {
-          console.log("Credenciais inválidas (senha incorreta)."); // Log para senha incorreta
+          console.log("Credenciais inválidas (senha incorreta).");
           return res.status(401).json({ success: false, message: 'Credenciais inválidas!' });
         }
-      });
+      } catch (error) {
+        console.error("Erro ao comparar senhas:", error);
+        return res.status(500).json({ success: false, message: 'Erro interno do servidor' });
+      }
+
     } else {
-      console.log("Nenhum usuário encontrado com o email/username fornecido."); // Log para usuário não encontrado
+      console.log("Nenhum usuário encontrado com o email/username fornecido.");
 
       // 2. Verificar na tabela 'empresas'
       const empresaQuery = "SELECT * FROM empresas WHERE email = $1";
       const empresaResults = await client.query(empresaQuery, [Email]);
-      console.log("Resultados da consulta 'empresas':", empresaResults.rows); // Log dos resultados da consulta
+      console.log("Resultados da consulta 'empresas':", empresaResults.rows);
 
       if (empresaResults.rows.length > 0) {
         const empresa = empresaResults.rows[0];
-        console.log("Empresa encontrada:", empresa); // Log da empresa encontrada
+        console.log("Empresa encontrada:", empresa);
 
         // Usando bcrypt-nodejs para comparar senhas
         bcrypt.compare(senha, empresa.senha, (err, senhaValida) => {
           if (err) {
-            console.error("Erro ao comparar senhas:", err); // Log do erro de comparação
+            console.error("Erro ao comparar senhas:", err);
             return res.status(500).json({ success: false, message: 'Erro interno do servidor' });
           }
 
-          console.log("Senha válida:", senhaValida); // Log do resultado da comparação
+          console.log("Senha válida:", senhaValida);
 
           if (senhaValida) {
             // Login bem-sucedido como empresa (Empresa)
             const token = jwt.sign({ userId: empresa.id, role: 'Empresa', username: empresa.nome }, jwtSecret, { expiresIn: '10h' });
-            console.log("Token gerado:", token); // Log do token gerado
+            console.log("Token gerado:", token);
             return res.json({
               success: true,
               message: 'Login bem-sucedido!',
               token: token,
-              username: empresa.nome, // Usando o nome da empresa como username
+              username: empresa.nome,
               userId: empresa.id,
-              role: 'Empresa' // Definindo a role como 'Empresa'
+              role: 'Empresa'
             });
           } else {
-            console.log("Credenciais inválidas (senha incorreta)."); // Log para senha incorreta
+            console.log("Credenciais inválidas (senha incorreta).");
             return res.status(401).json({ success: false, message: 'Credenciais inválidas!' });
           }
         });
       } else {
-        console.log("Nenhuma empresa encontrada com o email fornecido."); // Log para empresa não encontrada
+        console.log("Nenhuma empresa encontrada com o email fornecido.");
         client.release();
         return res.status(401).json({ success: false, message: 'Credenciais inválidas!' });
       }
     }
   } catch (error) {
-    console.error("Erro no login:", error); // Log detalhado do erro
+    console.error("Erro no login:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
