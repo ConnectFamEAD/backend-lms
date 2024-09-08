@@ -27,6 +27,59 @@ app.use('/pdf', express.static('pdfs'));
 
 app.use(express.json());
 
+// Função para validar CNPJ
+function validarCNPJ(cnpj) {
+  cnpj = cnpj.replace(/[^\d]+/g, ''); // Remove caracteres não numéricos
+
+  if (cnpj == '') return false;
+
+  if (cnpj.length != 14)
+    return false;
+
+  // Elimina CNPJs inválidos conhecidos
+  if (cnpj == "00000000000000" ||
+    cnpj == "11111111111111" ||
+    cnpj == "22222222222222" ||
+    cnpj == "33333333333333" ||
+    cnpj == "44444444444444" ||
+    cnpj == "55555555555555" ||
+    cnpj == "66666666666666" ||
+    cnpj == "77777777777777" ||
+    cnpj == "88888888888888" ||
+    cnpj == "99999999999999")
+    return false;
+
+  // Valida DVs
+  let tamanho = cnpj.length - 2
+  let numeros = cnpj.substring(0, tamanho);
+  let digitos = cnpj.substring(tamanho);
+  let soma = 0;
+  let pos = tamanho - 7;
+  for (let i = tamanho; i >= 1; i--) {
+    soma += numeros.charAt(tamanho - i) * pos--;
+    if (pos < 2)
+      pos = 9;
+  }
+  let resultado = soma % 11 < 2 ? 0 : 11 - soma % 11;
+  if (resultado != digitos.charAt(0))
+    return false;
+
+  tamanho = tamanho + 1;
+  numeros = cnpj.substring(0, tamanho);
+  soma = 0;
+  pos = tamanho - 7;
+  for (let i = tamanho; i >= 1; i--) {
+    soma += numeros.charAt(tamanho - i) * pos--;
+    if (pos < 2)
+      pos = 9;
+  }
+  resultado = soma % 11 < 2 ? 0 : 11 - soma % 11;
+  if (resultado != digitos.charAt(1))
+    return false;
+
+  return true;
+}
+
 const mercadopago = require("mercadopago");
 // APP_USR-8063147763333109-040612-2e2f18a4e1b39856373093e03bccce81-1759639890 - TEST-8063147763333109-040612-8f949eff9bb8bd0eb071d55bb23e6497-1759639890
 mercadopago.configure({
@@ -48,7 +101,87 @@ app.get('/api/cursos/status/:userId/:cursoId', async (req, res) => {
     res.status(500).json({ message: 'Erro interno do servidor.' });
   }
 });
+app.post('/api/empresas', async (req, res) => {
+  const dadosEmpresa = req.body;
+  const cnpj = dadosEmpresa.cnpj;
 
+  try {
+    // 1. Validação de Dados:
+    // 1.1. Validação de Formato:
+    if (!validarCNPJ(cnpj)) {
+      return res.status(400).json({ success: false, message: 'CNPJ inválido.' });
+    }
+    // ... (adicione outras validações de formato aqui)
+
+    // 1.2. Sanitização de Dados (opcional, mas recomendado)
+    // ... (implemente a sanitização dos dados da empresa aqui)
+
+    // 1.3. Validação de Negócios:
+    // ... (adicione outras validações de negócios aqui)
+
+    // 2. Verificar o número de tentativas no banco de dados
+    const result = await pool.query('SELECT tentativas, ultima_tentativa FROM cnpj_tentativas WHERE cnpj = $1', [cnpj]);
+
+    if (result.rows.length > 0) {
+      const tentativas = result.rows[0].tentativas;
+      const ultimaTentativa = result.rows[0].ultima_tentativa;
+
+      // Verificar se já se passaram 24 horas desde a última tentativa
+      const tempoDecorrido = Date.now() - ultimaTentativa.getTime();
+      if (tempoDecorrido < 24 * 60 * 60 * 1000) { // 24 horas em milissegundos
+        if (tentativas >= 3) {
+          return res.status(429).json({ success: false, message: 'Muitas tentativas de cadastro para este CNPJ. Aguarde um momento e tente novamente.' });
+        } else {
+          // Atualizar o número de tentativas e a última tentativa no banco de dados
+          await pool.query('UPDATE cnpj_tentativas SET tentativas = $1, ultima_tentativa = NOW() WHERE cnpj = $2', [tentativas + 1, cnpj]);
+        }
+      } else {
+        // Resetar as tentativas após 24 horas
+        await pool.query('UPDATE cnpj_tentativas SET tentativas = 1, ultima_tentativa = NOW() WHERE cnpj = $1', [cnpj]);
+      }
+    } else {
+      // Inserir o CNPJ na tabela de tentativas
+      await pool.query('INSERT INTO cnpj_tentativas (cnpj, tentativas, ultima_tentativa) VALUES ($1, 1, NOW())', [cnpj]);
+    }
+
+    // 3. Envie o email para suporte.fmatch@outlook.com
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.office365.com',
+      port: 587,
+      secure: false,
+      auth: {
+        user: 'suporte.fmatch@outlook.com',
+        pass: '@Desenho1977##',
+      },
+    });
+
+    const mailOptions = {
+      from: 'suporte.fmatch@outlook.com',
+      to: 'suporte.fmatch@outlook.com',
+      subject: 'Nova Empresa Cadastrada',
+      text: `
+        Uma nova empresa solicitou um cadastro de acesso de empresas na plataforma:
+
+        Nome da Empresa: ${dadosEmpresa.nomeEmpresa}
+        CNPJ: ${dadosEmpresa.cnpj}
+        Razão Social: ${dadosEmpresa.razaoSocial}
+        Endereço: ${dadosEmpresa.endereco}
+        Cidade: ${dadosEmpresa.cidade}
+        Estado: ${dadosEmpresa.estado}
+        CEP: ${dadosEmpresa.cep}
+        Telefone: ${dadosEmpresa.telefone}
+        Email: ${dadosEmpresa.email}
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(201).json({ success: true, message: 'Solicitação de cadastro enviada com sucesso!' });
+  } catch (error) {
+    console.error('Erro ao enviar email ou gerenciar tentativas de cadastro:', error);
+    res.status(500).json({ success: false, message: 'Erro ao enviar solicitação de cadastro.' });
+  }
+});
 app.get('/api/user/all-purchases', authenticateToken, async (req, res) => {
   const userId = req.user.userId;
 
