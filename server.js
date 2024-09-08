@@ -1170,49 +1170,78 @@ app.put('/api/user/profileEdit', async (req, res) => {
   }
 });
 
-app.post('/api/Updateempresas', (req, res) => {
-  const { cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha } = req.body;
+app.post('/api/Updateempresas', async (req, res) => {
+  const dadosEmpresa = req.body;
 
-  const saltRounds = 10;
-
-  bcrypt.genSalt(saltRounds, (err, salt) => {
-    if (err) {
-      console.error('Erro ao gerar salt:', err);
-      return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
+  try {
+    // 1. Validação de Dados:
+    // 1.1. Validação de Formato:
+    if (!validarCNPJ(dadosEmpresa.cnpj)) {
+      return res.status(400).json({ success: false, message: 'CNPJ inválido.' });
     }
+    // ... (adicione outras validações de formato aqui)
 
-    // Correção: Ordem dos argumentos no bcrypt.hash
-    bcrypt.hash(senha, salt, null, (err, hashedPassword) => { 
+    // 1.2. Sanitização de Dados (opcional, mas recomendado)
+    // ... (implemente a sanitização dos dados da empresa aqui)
+
+    // 1.3. Validação de Negócios:
+    const cnpjExiste = await pool.query('SELECT 1 FROM empresas WHERE cnpj = $1', [dadosEmpresa.cnpj]);
+    if (cnpjExiste.rows.length > 0) {
+      return res.status(400).json({ success: false, message: 'CNPJ já cadastrado.' });
+    }
+    // ... (adicione outras validações de negócios aqui)
+
+    // 2. Verificar o número de tentativas no banco de dados
+    // ... (código para verificar tentativas de cadastro)
+
+    // 3. Hash da senha com bcrypt-nodejs
+    const saltRounds = 10; // Número de rounds para o bcrypt (ajuste conforme necessário)
+    bcrypt.genSalt(saltRounds, (err, salt) => {
       if (err) {
-        console.error('Erro ao gerar hash da senha:', err);
-        return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
+        console.error('Erro ao gerar salt:', err);
+        return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa.' });
       }
 
-      pool.connect((err, client, release) => {
+      bcrypt.hash(dadosEmpresa.senha, salt, null, async (err, hashedPassword) => {
         if (err) {
-          console.error('Erro ao conectar ao banco de dados:', err);
-          return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
+          console.error('Erro ao gerar hash da senha:', err);
+          return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa.' });
         }
 
+        // 4. Salve os dados da empresa no banco de dados (com a senha hasheada)
         const query = `
-          INSERT INTO empresas (cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, senha)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          INSERT INTO empresas (nome, cnpj, razao_social, endereco, cidade, estado, cep, telefone, email, senha)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `;
-        const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, hashedPassword];
+        const values = [
+          dadosEmpresa.nome,
+          dadosEmpresa.cnpj,
+          dadosEmpresa.razaoSocial,
+          dadosEmpresa.endereco,
+          dadosEmpresa.cidade,
+          dadosEmpresa.estado,
+          dadosEmpresa.cep,
+          dadosEmpresa.telefone,
+          dadosEmpresa.email,
+          hashedPassword, // <-- Use a senha hasheada aqui
+        ];
 
-        client.query(query, values, (err, result) => {
-          release();
+        try {
+          await pool.query(query, values);
 
-          if (err) {
-            console.error('Erro ao cadastrar empresa:', err);
-            return res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa' });
-          }
+          // ... (envio de email)
 
           res.json({ success: true, message: 'Empresa cadastrada com sucesso!' });
-        });
+        } catch (error) {
+          console.error('Erro ao salvar dados da empresa ou enviar email:', error);
+          res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa.' });
+        }
       });
     });
-  });
+  } catch (error) {
+    console.error('Erro ao processar a requisição:', error);
+    res.status(500).json({ success: false, message: 'Erro ao cadastrar empresa.' });
+  }
 });
 
 // Rota para buscar todas as empresas
