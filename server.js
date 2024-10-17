@@ -14,6 +14,7 @@ const pool = new Pool({
   ssl: {
     rejectUnauthorized: false,
   },
+  connectionTimeoutMillis: 10000, // 10 segundos
 });
 
 app.use(cors({
@@ -936,9 +937,29 @@ app.post("/api/pagamento/notificacao", async (req, res) => {
   const { data } = req.body;
 
   try {
+    // Verifica se data existe e tem uma propriedade id
+    if (!data || !data.id) {
+      console.error('Dados de notificação inválidos:', req.body);
+      return res.status(400).send("Dados de notificação inválidos");
+    }
+
     const payment = await mercadopago.payment.findById(data.id);
+    
+    // Verifica se o pagamento foi encontrado
+    if (!payment || !payment.body) {
+      console.error('Pagamento não encontrado para o ID:', data.id);
+      return res.status(404).send("Pagamento não encontrado");
+    }
+
     const externalReference = payment.body.external_reference;
-    const compraIds = externalReference.split(';'); // Separa os IDs em um array
+    
+    // Verifica se external_reference existe
+    if (!externalReference) {
+      console.error('External reference não encontrada para o pagamento:', data.id);
+      return res.status(400).send("External reference não encontrada");
+    }
+
+    const compraIds = externalReference.split(';');
     const paymentStatus = payment.body.status;
 
     // Itera sobre cada ID de compra
