@@ -1,6 +1,5 @@
 
 cursos
-
 caminho_pdf
 varchar
 descricao
@@ -37,7 +36,6 @@ user_id
 int4
 
 compras_cursos
-
 created_at
 timestamp
 curso_id
@@ -60,7 +58,6 @@ user_id
 int4
 
 historico
-
 cod_indent
 varchar
 compra_id
@@ -87,7 +84,6 @@ valor_pago
 numeric
 
 users
-
 cep
 varchar
 cidade
@@ -112,3 +108,40 @@ sobrenome
 varchar
 username
 varchar
+
+empresas
+email
+varchar
+id
+int4
+modulos
+jsonb
+nome
+varchar
+senha
+varchar
+
+yamahaa/monroe/ x1Steele_Paige 
+perfeito, preciso que na pagina de "NovoAluno.js" ele carregue os dados dos alunos da empresa logada; tabela de " adicionar novo aluno " deve adicionar o aluno com a relação da empresa logada; formulario de "Cadastrar nova empresa" não pode aparecer caso o usuario logado seja uma empresa. forneça o codigo para essa solução:
+server.js
+19539 Tokens
+NovoAluno.js
+5200 Tokens
+
+TESTERVIDTUB
+TESTEVITUB
+VITUBTESTER
+anomtester9
+tubgab71
+bolso3624
+gabt2914
+qwraf76
+biriguililongas
+biriguilog
+promguider
+susasosus103
+juivui6
+kiabvei2
+suavit88
+kainov645
+danipaul166

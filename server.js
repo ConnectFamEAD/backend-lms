@@ -1679,7 +1679,7 @@ const authenticateToken = (req, res, next) => {
       return res.status(401).json({ message: 'Token não fornecido' });
     }
 
-    const decoded = jwt.verify(token, 'suus02201998##'); // Use a mesma chave que você usa para gerar o token
+    const decoded = jwt.verify(token, jwtSecret);
     req.user = decoded;
     next();
   } catch (error) {
@@ -1988,8 +1988,8 @@ app.get('/api/user/profile/:username', async (req, res) => {
       res.status(404).json({ success: false, message: 'Usuário não encontrado' });
     }
   } catch (error) {
-    console.error("Erro no servidor: ", error);
-    res.status(500).json({ success: false, message: 'Erro interno do servidor' });
+      console.error("Erro no servidor: ", error);
+      res.status(500).json({ success: false, message: 'Erro interno do servidor' });
   }
 });
 const cron = require('node-cron');
