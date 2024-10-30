@@ -137,7 +137,7 @@ app.post('/api/empresas', async (req, res) => {
     // 1.2. Sanitização de Dados (opcional, mas recomendado)
     // ... (implemente a sanitização dos dados da empresa aqui)
 
-    // 1.3. Validaão de Negócios:
+    // 1.3. Validaãão de Negócios:
     // ... (adicione outras validações de negócios aqui)
 
     // 2. Verificar o número de tentativas no banco de dados
@@ -1862,7 +1862,7 @@ app.get('/api/alunos/empresa/:empresaNome/count', async (req, res) => {
 // Rota para buscar alunos de uma empresa específica
 app.get('/api/alunos/empresa/:empresaNome', authenticateToken, async (req, res) => {
   try {
-    const empresaNome = req.user.username; // Usa o nome da empresa do token
+    const empresaNome = decodeURIComponent(req.params.empresaNome);
     
     const query = `
       SELECT u.empresa, u.id, u.nome, u.sobrenome, u.email, u.endereco, 
@@ -1881,8 +1881,7 @@ app.get('/api/alunos/empresa/:empresaNome', authenticateToken, async (req, res) 
     console.error("Error fetching students:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
-      details: error.message,
-      empresa: req.user.username
+      details: error.message
     });
   }
 });
