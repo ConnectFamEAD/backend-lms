@@ -85,6 +85,26 @@ const mercadopago = require("mercadopago");
 mercadopago.configure({
   access_token: "APP_USR-8063147763333109-040612-2e2f18a4e1b39856373093e03bccce81-1759639890",
 });
+
+// Middleware para autenticação
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ message: 'Token não fornecido' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, jwtSecret);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    console.error('Erro na autenticação:', error);
+    return res.status(403).json({ message: 'Token inválido ou expirado' });
+  }
+};
+
 app.get('/api/cursos/status/:userId/:cursoId', async (req, res) => {
   const { userId, cursoId } = req.params;
   try {
@@ -101,6 +121,7 @@ app.get('/api/cursos/status/:userId/:cursoId', async (req, res) => {
     res.status(500).json({ message: 'Erro interno do servidor.' });
   }
 });
+
 app.post('/api/empresas', async (req, res) => {
   const dadosEmpresa = req.body;
   const cnpj = dadosEmpresa.cnpj;
@@ -116,7 +137,7 @@ app.post('/api/empresas', async (req, res) => {
     // 1.2. Sanitização de Dados (opcional, mas recomendado)
     // ... (implemente a sanitização dos dados da empresa aqui)
 
-    // 1.3. Valida��ão de Negócios:
+    // 1.3. Validaão de Negócios:
     // ... (adicione outras validações de negócios aqui)
 
     // 2. Verificar o número de tentativas no banco de dados
@@ -182,6 +203,7 @@ app.post('/api/empresas', async (req, res) => {
     res.status(500).json({ success: false, message: 'Erro ao enviar solicitação de cadastro.' });
   }
 });
+
 app.get('/api/user/all-purchases', authenticateToken, async (req, res) => {
   const userId = req.user.userId;
 
@@ -221,6 +243,7 @@ app.get('/api/user/all-purchases', authenticateToken, async (req, res) => {
 const generateCode = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
+
 app.post('/api/user/check-email', async (req, res) => {
   const { email } = req.body;
   try {
@@ -299,6 +322,7 @@ app.put('/api/users/atualizar-senhas', async (req, res) => {
       res.status(500).json({ success: false, message: 'Erro ao atualizar senhas.' });
   }
 });
+
 app.post('/api/user/verify-code', async (req, res) => {
   const { email, code } = req.body;
   // Verifica se o código e o e-mail correspondem ao que está no banco
@@ -430,6 +454,7 @@ app.post('/api/cursos/concluir', authenticateToken,  async (req, res) => {
     res.status(500).json({ success: false, message: 'Erro ao atualizar status e data de conclusão do curso.' });
   }
 });
+
 app.get('/api/generate-historico-certificado/:userId/:cursoId', async (req, res) => {
   const { userId, cursoId } = req.params;
   const codIndentResult = await pool.query('SELECT cod_indent FROM historico WHERE user_id = $1 AND curso_id = $2', [userId, cursoId]);
@@ -1130,6 +1155,7 @@ const getAulasPorCursoId = async (cursoId) => {
   client.release();
   return rows;
 };
+
 app.post('/login', async (req, res) => {
   const { identificador, senha } = req.body;
   let connection;
@@ -1182,6 +1208,7 @@ app.post('/login', async (req, res) => {
     }
   }
 });
+
 app.put('/api/user/profileEdit', async (req, res) => {
   const { userId, nome, sobrenome, email, endereco, cidade, cep, pais, role, username, empresa } = req.body;
 
@@ -1237,7 +1264,7 @@ app.post('/api/Updateempresas', async (req, res) => {
     // 1.2. Sanitização de Dados (opcional, mas recomendado)
     // ... (implemente a sanitização dos dados da empresa aqui)
 
-    // 1.3. Validação de Negócios:
+    // 1.3. Validaãão de Negócios:
     // ... (adicione outras validações de negócios aqui)
 
     // 2. Verificar o número de tentativas no banco de dados
@@ -1609,6 +1636,7 @@ app.get('/api/cursos/count', async (req, res) => {
     res.status(500).json({ success: false, message: "Erro interno do servidor" });
   }
 });
+
 app.get("/alunos", async (req, res) => {
   try {
     const query = "SELECT  empresa, id, nome, sobrenome, email, endereco, cidade, cep, pais, role, username FROM Users WHERE role = $1";
@@ -1666,24 +1694,6 @@ app.delete('/deleteAllUsers', async (req, res) => {
     if (client) client.release();
   }
 });
-
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ message: 'Token não fornecido' });
-  }
-
-  try {
-    const decoded = jwt.verify(token, jwtSecret); // Use jwtSecret aqui
-    req.user = decoded;
-    next();
-  } catch (error) {
-    console.error('Erro na autenticação:', error);
-    return res.status(403).json({ message: 'Token inválido ou expirado' });
-  }
-};
 
 app.get('/api/validateToken', authenticateToken, (req, res) => {
   res.json({
@@ -1808,6 +1818,7 @@ app.post("/api/user/login", async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
 app.get('/api/alunos/empresa', authenticateToken, async (req, res) => {
   try {
     const empresaNome = req.user.username;
@@ -2016,6 +2027,7 @@ app.get('/api/user/profile/:username', async (req, res) => {
       res.status(500).json({ success: false, message: 'Erro interno do servidor' });
   }
 });
+
 const cron = require('node-cron');
 
 // Rotina que executa todos os dias à meia-noite GMT-3
@@ -2085,6 +2097,7 @@ app.get('/api/check-email/:email', async (req, res) => {
     res.status(500).json({ message: 'Erro interno do servidor' });
   }
 });
+
 app.get('/api/cursos-compra/', authenticateToken, async (req, res) => {
   const userId = req.user.userId;  // Usando userId do token
 
@@ -2105,6 +2118,7 @@ app.get('/api/cursos-compra/', authenticateToken, async (req, res) => {
     res.status(500).json({ success: false, message: 'Erro ao listar cursos comprados' });
   }
 });
+
 app.get('/api/cursos-comprados/', authenticateToken, async (req, res) => {
   const userId = req.user.userId;
 
@@ -2288,6 +2302,7 @@ app.use((req, res, next) => {
 
   next();
 });
+
 const port = process.env.PORT || 5000;
 
 app.listen(port, () => console.log(`Server is running on port ${port}`))
