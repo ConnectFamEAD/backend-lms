@@ -1295,20 +1295,46 @@ app.delete('/api/empresas/:id', async (req, res) => {
 });
 
 // Rota para atualizar uma empresa
+
 app.put('/api/empresas/:id', async (req, res) => {
   const { id } = req.params;
-  const { cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email } = req.body;
+  const { 
+    cnpj, nome, logradouro, numero, complemento, bairro, 
+    cidade, estado, cep, telefone, responsavel, email, senha 
+  } = req.body;
 
   try {
     const client = await pool.connect();
-    const query = `
-      UPDATE empresas
-      SET cnpj = $1, nome = $2, logradouro = $3, numero = $4, complemento = $5, 
-          bairro = $6, cidade = $7, estado = $8, cep = $9, telefone = $10, 
-          responsavel = $11, email = $12
-      WHERE id = $13
-    `;
-    const values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, estado, cep, telefone, responsavel, email, id];
+    let query;
+    let values;
+
+    if (senha) {
+      // Se uma nova senha foi fornecida, hash e atualiza
+      const salt = bcrypt.genSaltSync(10);
+      const hashedPassword = bcrypt.hashSync(senha, salt);
+      
+      query = `
+        UPDATE empresas
+        SET cnpj = $1, nome = $2, logradouro = $3, numero = $4, complemento = $5, 
+            bairro = $6, cidade = $7, estado = $8, cep = $9, telefone = $10, 
+            responsavel = $11, email = $12, senha = $13
+        WHERE id = $14
+      `;
+      values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, 
+                estado, cep, telefone, responsavel, email, hashedPassword, id];
+    } else {
+      // Se não houver nova senha, mantém a senha atual
+      query = `
+        UPDATE empresas
+        SET cnpj = $1, nome = $2, logradouro = $3, numero = $4, complemento = $5, 
+            bairro = $6, cidade = $7, estado = $8, cep = $9, telefone = $10, 
+            responsavel = $11, email = $12
+        WHERE id = $13
+      `;
+      values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, 
+                estado, cep, telefone, responsavel, email, id];
+    }
+
     await client.query(query, values);
     client.release();
     res.json({ success: true, message: 'Empresa atualizada com sucesso!' });
