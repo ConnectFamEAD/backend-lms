@@ -116,7 +116,7 @@ app.post('/api/empresas', async (req, res) => {
     // 1.2. Sanitização de Dados (opcional, mas recomendado)
     // ... (implemente a sanitização dos dados da empresa aqui)
 
-    // 1.3. Validação de Negócios:
+    // 1.3. Valida��ão de Negócios:
     // ... (adicione outras validações de negócios aqui)
 
     // 2. Verificar o número de tentativas no banco de dados
@@ -1668,18 +1668,15 @@ app.delete('/deleteAllUsers', async (req, res) => {
 });
 
 const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ message: 'Token não fornecido' });
+  }
+
   try {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader) {
-      return res.status(401).json({ message: 'Token não fornecido' });
-    }
-
-    const token = authHeader.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ message: 'Token não fornecido' });
-    }
-
-    const decoded = jwt.verify(token, jwtSecret);
+    const decoded = jwt.verify(token, jwtSecret); // Use jwtSecret aqui
     req.user = decoded;
     next();
   } catch (error) {
@@ -1811,7 +1808,32 @@ app.post("/api/user/login", async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+app.get('/api/alunos/empresa', authenticateToken, async (req, res) => {
+  try {
+    const empresaNome = req.user.username;
+    
+    const query = `
+      SELECT u.empresa, u.id, u.nome, u.sobrenome, u.email, u.endereco, 
+             u.cidade, u.cep, u.pais, u.role, u.username 
+      FROM Users u
+      WHERE u.role = 'Aluno' 
+      AND UPPER(u.empresa) = UPPER($1)
+    `;
+    
+    const client = await pool.connect();
+    const results = await client.query(query, [empresaNome]);
+    client.release();
 
+    res.json(results.rows);
+  } catch (error) {
+    console.error("Error fetching students:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      empresa: req.user.username
+    });
+  }
+});
 // Rota para contar alunos de uma empresa específica
 app.get('/api/alunos/empresa/:empresaNome/count', async (req, res) => {
   const empresaNome = decodeURIComponent(req.params.empresaNome);
@@ -1832,10 +1854,11 @@ app.get('/api/alunos/empresa/:empresaNome', authenticateToken, async (req, res) 
     const empresaNome = req.user.username; // Usa o nome da empresa do token
     
     const query = `
-      SELECT empresa, id, nome, sobrenome, email, endereco, cidade, cep, pais, role, username 
-      FROM Users 
-      WHERE role = 'Aluno' 
-      AND empresa = $1
+      SELECT u.empresa, u.id, u.nome, u.sobrenome, u.email, u.endereco, 
+             u.cidade, u.cep, u.pais, u.role, u.username 
+      FROM Users u
+      WHERE u.role = 'Aluno' 
+      AND UPPER(u.empresa) = UPPER($1)
     `;
     
     const client = await pool.connect();
@@ -1847,7 +1870,8 @@ app.get('/api/alunos/empresa/:empresaNome', authenticateToken, async (req, res) 
     console.error("Error fetching students:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
-      details: error.message
+      details: error.message,
+      empresa: req.user.username
     });
   }
 });
@@ -2268,38 +2292,4 @@ const port = process.env.PORT || 5000;
 
 app.listen(port, () => console.log(`Server is running on port ${port}`))
 
-app.get('/api/alunos/empresa', authenticateToken, async (req, res) => {
-  try {
-    if (!req.user || !req.user.username) {
-      return res.status(400).json({ 
-        error: "Bad Request", 
-        message: "Nome da empresa não encontrado no token"
-      });
-    }
 
-    const empresaNome = req.user.username;
-    console.log('Buscando alunos para empresa:', empresaNome);
-    
-    const query = `
-      SELECT u.empresa, u.id, u.nome, u.sobrenome, u.email, u.endereco, 
-             u.cidade, u.cep, u.pais, u.role, u.username 
-      FROM Users u
-      WHERE u.role = 'Aluno' 
-      AND UPPER(u.empresa) = UPPER($1)
-    `;
-    
-    const client = await pool.connect();
-    const results = await client.query(query, [empresaNome]);
-    client.release();
-
-    console.log('Alunos encontrados:', results.rows.length);
-    res.json(results.rows);
-  } catch (error) {
-    console.error("Error fetching students:", error);
-    res.status(500).json({ 
-      error: "Internal Server Error", 
-      details: error.message,
-      empresa: req.user?.username
-    });
-  }
-});
