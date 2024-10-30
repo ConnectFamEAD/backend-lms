@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
@@ -274,7 +273,32 @@ const sendVerificationCode = async (email, code) => {
     }
 };
 
+app.put('/api/users/atualizar-senhas', async (req, res) => {
+  const usuarios = req.body;
+  try {
+    const client = await pool.connect();
+    await client.query('BEGIN'); // Iniciar transação
 
+    for (const usuario of usuarios) {
+      const { email, senha } = usuario; // senha já criptografada
+
+      // Atualizar a senha do usuário
+      const updateQuery = 'UPDATE users SET senha = $1 WHERE email = $2';
+      await client.query(updateQuery, [senha, email]);
+      console.log(`Senha do usuário ${email} atualizada com sucesso.`);
+    }
+
+    await client.query('COMMIT'); // Confirmar transação
+    client.release();
+    res.json({ success: true, message: 'Senhas atualizadas com sucesso!' });
+
+  } catch (error) {
+      await client.query('ROLLBACK');  // Reverter a transação em caso de erro
+      client.release();
+      console.error('Erro ao atualizar senhas:', error);
+      res.status(500).json({ success: false, message: 'Erro ao atualizar senhas.' });
+  }
+});
 app.post('/api/user/verify-code', async (req, res) => {
   const { email, code } = req.body;
   // Verifica se o código e o e-mail correspondem ao que está no banco
@@ -386,7 +410,7 @@ app.post('/api/cursos/concluir', authenticateToken,  async (req, res) => {
     const query = 'UPDATE progresso_cursos SET status = $1, time_certificado = $2 WHERE user_id = $3 AND curso_id = $4';
     const result = await pool.query(query, ['concluido', dataAtual, userId, cursoId]);
 
-    // Reseta os acessos pós-conclusão
+    // Reseta os acessos pós-concluso
     const resetAcessos = 'UPDATE progresso_cursos SET acessos_pos_conclusao = 0 WHERE user_id = $1 AND curso_id = $2';
     await pool.query(resetAcessos, [userId, cursoId]);
 
@@ -937,6 +961,8 @@ app.post("/api/pagamento/notificacao", async (req, res) => {
   const { data } = req.body;
 
   try {
+    console.log('Corpo da requisição recebida:', req.body);
+
     // Verifica se data existe e tem uma propriedade id
     if (!data || !data.id) {
       console.error('Dados de notificação inválidos:', req.body);
@@ -950,6 +976,8 @@ app.post("/api/pagamento/notificacao", async (req, res) => {
       console.error('Pagamento não encontrado para o ID:', data.id);
       return res.status(404).send("Pagamento não encontrado");
     }
+
+    console.log('Pagamento encontrado:', payment);
 
     const externalReference = payment.body.external_reference;
     
@@ -1206,10 +1234,6 @@ app.post('/api/Updateempresas', async (req, res) => {
     // ... (implemente a sanitização dos dados da empresa aqui)
 
     // 1.3. Validação de Negócios:
-    const cnpjExiste = await pool.query('SELECT 1 FROM empresas WHERE cnpj = $1', [dadosEmpresa.cnpj]);
-    if (cnpjExiste.rows.length > 0) {
-      return res.status(400).json({ success: false, message: 'CNPJ já cadastrado.' });
-    }
     // ... (adicione outras validações de negócios aqui)
 
     // 2. Verificar o número de tentativas no banco de dados
@@ -1757,7 +1781,7 @@ app.post("/api/user/login", async (req, res) => {
 
 // Rota para contar alunos de uma empresa específica
 app.get('/api/alunos/empresa/:empresaNome/count', async (req, res) => {
-  const { empresaNome } = req.params;
+  const empresaNome = decodeURIComponent(req.params.empresaNome);
   try {
     const client = await pool.connect();
     const { rows } = await client.query("SELECT COUNT(*) FROM users WHERE role = 'Aluno' AND empresa = $1", [empresaNome]);
@@ -1770,10 +1794,17 @@ app.get('/api/alunos/empresa/:empresaNome/count', async (req, res) => {
 });
 
 // Rota para buscar alunos de uma empresa específica
-app.get('/alunos/empresa/:empresaNome', async (req, res) => {
-  const { empresaNome } = req.params;
+app.get('/api/alunos/empresa/:empresaNome', authenticateToken, async (req, res) => {
   try {
-    const query = "SELECT empresa, id, nome, sobrenome, email, endereco, cidade, cep, pais, role, username FROM Users WHERE role = 'Aluno' AND empresa = $1";
+    const empresaNome = req.user.username; // Usa o nome da empresa do token
+    
+    const query = `
+      SELECT empresa, id, nome, sobrenome, email, endereco, cidade, cep, pais, role, username 
+      FROM Users 
+      WHERE role = 'Aluno' 
+      AND empresa = $1
+    `;
+    
     const client = await pool.connect();
     const results = await client.query(query, [empresaNome]);
     client.release();
@@ -1781,13 +1812,16 @@ app.get('/alunos/empresa/:empresaNome', async (req, res) => {
     res.json(results.rows);
   } catch (error) {
     console.error("Error fetching students:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message
+    });
   }
 });
 
 // Rota para contar alunos de uma empresa específica que mudaram a senha padrão
 app.get('/api/alunos/empresa/:empresaNome/password-changed/count', async (req, res) => {
-  const { empresaNome } = req.params;
+  const empresaNome = decodeURIComponent(req.params.empresaNome);
   try {
     const client = await pool.connect();
     const { rows } = await client.query("SELECT COUNT(*) FROM users WHERE role = 'Aluno' AND empresa = $1 AND senha != 'senha_padrao'", [empresaNome]);
@@ -2203,3 +2237,29 @@ app.use((req, res, next) => {
 const port = process.env.PORT || 5000;
 
 app.listen(port, () => console.log(`Server is running on port ${port}`))
+
+app.get('/api/alunos/empresa', authenticateToken, async (req, res) => {
+  try {
+    const empresaNome = req.user.username;
+    
+    const query = `
+      SELECT u.empresa, u.id, u.nome, u.sobrenome, u.email, u.endereco, 
+             u.cidade, u.cep, u.pais, u.role, u.username 
+      FROM Users u
+      WHERE u.role = 'Aluno' 
+      AND u.empresa = $1
+    `;
+    
+    const client = await pool.connect();
+    const results = await client.query(query, [empresaNome]);
+    client.release();
+
+    res.json(results.rows);
+  } catch (error) {
+    console.error("Error fetching students:", error);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message
+    });
+  }
+});
