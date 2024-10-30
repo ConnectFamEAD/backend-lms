@@ -1152,9 +1152,13 @@ app.post('/login', async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, role: user.acesso, instituicaoNome: user.instituicaonome },
-      jwtSecret,
-      { expiresIn: '10h' }
+      { 
+        userId: user.id, 
+        username: user.username,
+        role: user.role 
+      }, 
+      'suus02201998##', 
+      { expiresIn: '24h' }
     );
 
     if (!token) {
@@ -1664,16 +1668,18 @@ app.delete('/deleteAllUsers', async (req, res) => {
 });
 
 const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ message: 'Token não fornecido' });
-  }
-
   try {
-    // Use a constante jwtSecret que já está definida no início do arquivo
-    const decoded = jwt.verify(token, jwtSecret);
+    const authHeader = req.headers['authorization'];
+    if (!authHeader) {
+      return res.status(401).json({ message: 'Token não fornecido' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ message: 'Token não fornecido' });
+    }
+
+    const decoded = jwt.verify(token, 'suus02201998##'); // Use a mesma chave que você usa para gerar o token
     req.user = decoded;
     next();
   } catch (error) {
@@ -2264,7 +2270,15 @@ app.listen(port, () => console.log(`Server is running on port ${port}`))
 
 app.get('/api/alunos/empresa', authenticateToken, async (req, res) => {
   try {
+    if (!req.user || !req.user.username) {
+      return res.status(400).json({ 
+        error: "Bad Request", 
+        message: "Nome da empresa não encontrado no token"
+      });
+    }
+
     const empresaNome = req.user.username;
+    console.log('Buscando alunos para empresa:', empresaNome);
     
     const query = `
       SELECT u.empresa, u.id, u.nome, u.sobrenome, u.email, u.endereco, 
@@ -2278,14 +2292,14 @@ app.get('/api/alunos/empresa', authenticateToken, async (req, res) => {
     const results = await client.query(query, [empresaNome]);
     client.release();
 
-    console.log('Alunos encontrados:', results.rows);
+    console.log('Alunos encontrados:', results.rows.length);
     res.json(results.rows);
   } catch (error) {
     console.error("Error fetching students:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
       details: error.message,
-      empresa: req.user.username
+      empresa: req.user?.username
     });
   }
 });
