@@ -1662,25 +1662,26 @@ app.delete('/deleteAllUsers', async (req, res) => {
     if (client) client.release();
   }
 });
-function authenticateToken(req, res, next) {
+
+const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Extrai o token do cabeçalho Authorization
+  const token = authHeader && authHeader.split(' ')[1];
 
-  if (token == null) return res.sendStatus(401); // Se não houver token, retorna 401 (Não Autorizado)
+  if (!token) {
+    return res.status(401).json({ message: 'Token não fornecido' });
+  }
 
-  jwt.verify(token, jwtSecret, (err, user) => {
-    if (err) return res.sendStatus(403); // Se houver um erro na verificação, retorna 403 (Proibido)
+  try {
+    // Use a constante jwtSecret que já está definida no início do arquivo
+    const decoded = jwt.verify(token, jwtSecret);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    console.error('Erro na autenticação:', error);
+    return res.status(403).json({ message: 'Token inválido ou expirado' });
+  }
+};
 
-    // Adicionando os detalhes do usuário ao objeto de solicitação
-    req.user = {
-      userId: user.userId, // Certifique-se de que o payload do token tenha 'userId'
-      role: user.role, // Certifique-se de que o payload do token tenha 'role'
-      username: user.username // Certifique-se de que o payload do token tenha 'username'
-    };
-
-    next(); // Chama o próximo middleware na pilha
-  });
-}
 app.get('/api/validateToken', authenticateToken, (req, res) => {
   res.json({
     isValid: true,
@@ -2226,19 +2227,16 @@ app.delete('/deleteAll', async (req, res) => {
 
 
 app.use((req, res, next) => {
-  // Se não há token na requisição, passe para a próxima rota
   if (!req.headers.authorization) return next();
 
-  // Decodificar o token
   const token = req.headers.authorization.split(' ')[1];
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    // Use a mesma constante jwtSecret
+    const payload = jwt.verify(token, jwtSecret);
     req.user = payload;
   } catch (error) {
     console.log('Error decoding JWT: ', error);
   }
-  
-
   next();
 });
 
@@ -2273,19 +2271,21 @@ app.get('/api/alunos/empresa', authenticateToken, async (req, res) => {
              u.cidade, u.cep, u.pais, u.role, u.username 
       FROM Users u
       WHERE u.role = 'Aluno' 
-      AND u.empresa = $1
+      AND UPPER(u.empresa) = UPPER($1)
     `;
     
     const client = await pool.connect();
     const results = await client.query(query, [empresaNome]);
     client.release();
 
+    console.log('Alunos encontrados:', results.rows);
     res.json(results.rows);
   } catch (error) {
     console.error("Error fetching students:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
-      details: error.message
+      details: error.message,
+      empresa: req.user.username
     });
   }
 });
