@@ -999,7 +999,7 @@ app.post("/api/pagamento/notificacao", async (req, res) => {
     // Verifica se o pagamento foi encontrado
     if (!payment || !payment.body) {
       console.error('Pagamento não encontrado para o ID:', data.id);
-      return res.status(404).send("Pagamento não encontrado");
+      return res.status(404).send("Pagamento n��o encontrado");
     }
 
     console.log('Pagamento encontrado:', payment);
@@ -2305,5 +2305,50 @@ app.use((req, res, next) => {
 const port = process.env.PORT || 5000;
 
 app.listen(port, () => console.log(`Server is running on port ${port}`))
+
+// Rota para verificar se o certificado existe
+app.get('/api/check-certificado/:userId/:cursoId', async (req, res) => {
+  const { userId, cursoId } = req.params;
+
+  try {
+    // Verifica se existe um registro de conclusão
+    const query = `
+      SELECT EXISTS (
+        SELECT 1 
+        FROM progresso_cursos 
+        WHERE user_id = $1 
+        AND curso_id = $2 
+        AND status = 'concluido'
+      )`;
+    
+    const result = await pool.query(query, [userId, cursoId]);
+    
+    res.json({
+      exists: result.rows[0].exists,
+      message: result.rows[0].exists ? 'Certificado disponível' : 'Certificado não encontrado'
+    });
+  } catch (error) {
+    console.error('Erro ao verificar certificado:', error);
+    res.status(500).json({
+      exists: false,
+      message: 'Erro ao verificar certificado'
+    });
+  }
+});
+
+// Ajuste na rota de geração do certificado
+app.get('/api/generate-historico-certificado/:userId/:cursoId', async (req, res) => {
+  try {
+    // Código existente da rota
+    // Referência às linhas:
+    startLine: 458
+    endLine: 569
+    
+    // Adicionar tratamento de erro
+  } catch (error) {
+    console.error('Erro ao gerar certificado:', error);
+    res.status(500).send('Erro ao gerar certificado. Por favor, tente novamente.');
+  }
+});
 
 
