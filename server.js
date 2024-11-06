@@ -430,7 +430,7 @@ app.post('/api/cursos/concluir', authenticateToken,  async (req, res) => {
     // Define a data e hora atuais de São Paulo (UTC-3)
     const dataAtual = new Date(new Date().setHours(new Date().getHours() - 3)).toISOString();
 
-    // Atualiza o status e a data de conclusão do curso em progresso_cursos
+    // Atualiza o status e a data de concluso do curso em progresso_cursos
     const query = 'UPDATE progresso_cursos SET status = $1, time_certificado = $2 WHERE user_id = $3 AND curso_id = $4';
     const result = await pool.query(query, ['concluido', dataAtual, userId, cursoId]);
 
@@ -999,7 +999,7 @@ app.post("/api/pagamento/notificacao", async (req, res) => {
     // Verifica se o pagamento foi encontrado
     if (!payment || !payment.body) {
       console.error('Pagamento não encontrado para o ID:', data.id);
-      return res.status(404).send("Pagamento n��o encontrado");
+      return res.status(404).send("Pagamento no encontrado");
     }
 
     console.log('Pagamento encontrado:', payment);
@@ -2307,18 +2307,20 @@ const port = process.env.PORT || 5000;
 app.listen(port, () => console.log(`Server is running on port ${port}`))
 
 // Rota para verificar se o certificado existe
+// Rota para verificar se o certificado existe
 app.get('/api/check-certificado/:userId/:cursoId', async (req, res) => {
   const { userId, cursoId } = req.params;
 
   try {
-    // Verifica se existe um registro de conclusão
+    // Verifica se existe um registro de conclusão no histórico
     const query = `
       SELECT EXISTS (
         SELECT 1 
-        FROM progresso_cursos 
+        FROM historico 
         WHERE user_id = $1 
         AND curso_id = $2 
-        AND status = 'concluido'
+        AND status_progresso = 'concluido'
+        AND cod_indent IS NOT NULL
       )`;
     
     const result = await pool.query(query, [userId, cursoId]);
@@ -2335,7 +2337,6 @@ app.get('/api/check-certificado/:userId/:cursoId', async (req, res) => {
     });
   }
 });
-
 // Ajuste na rota de geração do certificado
 app.get('/api/generate-historico-certificado/:userId/:cursoId', async (req, res) => {
   try {
@@ -2351,4 +2352,122 @@ app.get('/api/generate-historico-certificado/:userId/:cursoId', async (req, res)
   }
 });
 
+app.post('/api/generate-custom-certificate', async (req, res) => {
+  try {
+    const userId = 88; // ID da Rosane_Lima
+    const cursoId = 5; // ID do curso Gestão de Inventários Estoque MRO
+    const dataConclusao = new Date('2024-11-06T16:44:00.000Z'); // 13:44 BRT = 16:44 UTC
+    const codIndent = require('crypto').randomUUID();
 
+    // 1. Atualizar progresso_cursos
+    const progressoQuery = `
+      INSERT INTO progresso_cursos 
+        (user_id, curso_id, progresso, status, time_certificado, cod_indent)
+      VALUES 
+        ($1, $2, 100, 'concluido', $3, $4)
+      ON CONFLICT (user_id, curso_id) 
+      DO UPDATE SET 
+        status = 'concluido',
+        progresso = 100,
+        time_certificado = $3,
+        cod_indent = $4`;
+    
+    await pool.query(progressoQuery, [userId, cursoId, dataConclusao, codIndent]);
+
+    // 2. Atualizar histórico
+    const historicoQuery = `
+      INSERT INTO historico 
+        (user_id, curso_id, status, status_progresso, data_conclusao, cod_indent)
+      VALUES 
+        ($1, $2, 'aprovado', 'concluido', $3, $4)
+      ON CONFLICT (user_id, curso_id) 
+      DO UPDATE SET 
+        status = 'aprovado',
+        status_progresso = 'concluido',
+        data_conclusao = $3,
+        cod_indent = $4`;
+    
+    await pool.query(historicoQuery, [userId, cursoId, dataConclusao, codIndent]);
+
+    // 3. Gerar o certificado usando a rota existente
+    const certificadoUrl = `/api/certificado-concluido/Rosane_Lima/${cursoId}`;
+
+    res.json({
+      success: true,
+      message: 'Certificado gerado com sucesso',
+      certificadoUrl,
+      codIndent,
+      dataConclusao: dataConclusao.toLocaleString('pt-BR', {
+        timeZone: 'America/Sao_Paulo'
+      })
+    });
+
+  } catch (error) {
+    console.error('Erro ao gerar certificado:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao gerar certificado',
+      error: error.message
+    });
+  }
+});
+
+// Rota temporária para gerar certificado manualmente
+app.post('/api/generate-manual-certificate', async (req, res) => {
+  try {
+    const userId = 88; // ID da Rosane_Lima
+    const cursoId = 4; // ID do curso
+    const currentDate = new Date();
+    const codIdent = require('crypto').randomUUID();
+
+    // 1. Registrar a compra do curso
+    const compraQuery = `
+      INSERT INTO compras_cursos 
+        (user_id, curso_id, data_compra, status, periodo, created_at)
+      VALUES 
+        ($1, $2, $3, 'aprovado', '6m', $3)
+      RETURNING id`;
+    
+    const compraResult = await pool.query(compraQuery, [userId, cursoId, currentDate]);
+    const compraId = compraResult.rows[0].id;
+
+    // 2. Inserir no histórico
+    const historicoQuery = `
+      INSERT INTO historico 
+        (user_id, curso_id, compra_id, status, status_progresso, data_compra, data_conclusao, cod_indent)
+      VALUES 
+        ($1, $2, $3, 'aprovado', 'concluido', $4, $4, $5)`;
+    
+    await pool.query(historicoQuery, [userId, cursoId, compraId, currentDate, codIdent]);
+
+    // 3. Inserir/Atualizar progresso_cursos
+    const progressoQuery = `
+      INSERT INTO progresso_cursos 
+        (user_id, curso_id, progresso, status, time_certificado, cod_indent)
+      VALUES 
+        ($1, $2, 100, 'concluido', $3, $4)
+      ON CONFLICT (user_id, curso_id) 
+      DO UPDATE SET 
+        status = 'concluido',
+        progresso = 100,
+        time_certificado = $3,
+        cod_indent = $4`;
+    
+    await pool.query(progressoQuery, [userId, cursoId, currentDate, codIdent]);
+
+    res.json({
+      success: true,
+      message: 'Certificado gerado com sucesso',
+      certificadoUrl: `/api/certificado-concluido/Rosane_Lima/${cursoId}`,
+      codIdent
+    });
+
+  } catch (error) {
+    console.error('Erro ao gerar certificado:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao gerar certificado',
+      error: error.message
+    });
+  }
+});
