@@ -27,12 +27,10 @@ app.use('/pdf', express.static('pdfs'));
 
 app.use(express.json());
 
-// Defina a chave secreta no início do arquivo
-
 
 // Função para validar CNPJ
 function validarCNPJ(cnpj) {
-  cnpj = cnpj.replace(/[^\d]+/g, ''); // Remove caracteres n����o numéricos
+  cnpj = cnpj.replace(/[^\d]+/g, ''); // Remove caracteres não numéricos
 
   if (cnpj == '') return false;
 
@@ -91,35 +89,20 @@ mercadopago.configure({
 
 // Middleware para autenticação
 const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ message: 'Token não fornecido' });
+  }
+
   try {
-    const authHeader = req.headers['authorization'];
-    
-    if (!authHeader) {
-      return res.status(401).json({ message: 'Token não fornecido' });
-    }
-
-    const token = authHeader.startsWith('Bearer ')
-      ? authHeader.split(' ')[1]
-      : authHeader;
-
-    if (!token || token === 'null' || token === 'undefined') {
-      return res.status(401).json({ message: 'Token inválido' });
-    }
-
-    try {
-      const decoded = jwt.verify(token, jwtSecret);
-      req.user = decoded;
-      next();
-    } catch (error) {
-      console.error('Erro na verificação do token:', {
-        error: error.message,
-        token: token
-      });
-      return res.status(403).json({ message: 'Token inválido' });
-    }
+    const decoded = jwt.verify(token, jwtSecret); // Use a constante jwtSecret aqui
+    req.user = decoded;
+    next();
   } catch (error) {
-    console.error('Erro no middleware de autenticação:', error);
-    return res.status(500).json({ message: 'Erro interno do servidor' });
+    console.error('Erro na verificação do token:', error);
+    return res.status(403).json({ message: 'Token inválido' });
   }
 };
 
@@ -343,7 +326,7 @@ app.put('/api/users/atualizar-senhas', async (req, res) => {
 
 app.post('/api/user/verify-code', async (req, res) => {
   const { email, code } = req.body;
-  // Verifica se o código e o e-mail correspondem ao que est�� no banco
+  // Verifica se o código e o e-mail correspondem ao que está no banco
   const user = await pool.query('SELECT * FROM users WHERE email = $1 AND cod_rec = $2', [email, code]);
   if (user.rows.length > 0) {
     // Código correto, limpa o cod_rec e avisa o usuário para mudar a senha
@@ -1186,15 +1169,14 @@ app.post('/login', async (req, res) => {
       const user = result.rows[0];
       
       if (bcrypt.compareSync(password, user.senha)) {
-        // Gerar token JWT
         const token = jwt.sign(
           { 
-            userId: user.id, 
-            role: user.role, 
-            username: user.username 
+            id: user.id, 
+            username: user.username, 
+            role: user.role 
           }, 
-          jwtSecret, 
-          { expiresIn: '10h' }
+          jwtSecret,
+          { expiresIn: '24h' }
         );
 
         res.json({
@@ -1790,7 +1772,7 @@ app.post("/api/user/login", async (req, res) => {
         const empresa = empresaResults.rows[0];
         console.log("Empresa encontrada:", empresa);
 
-        // Usando bcrypt-no dejs para comparar senhas
+        // Usando bcrypt-nodejs para comparar senhas
         bcrypt.compare(senha, empresa.senha, (err, senhaValida) => {
           if (err) {
             console.error("Erro ao comparar senhas:", err);
@@ -2282,10 +2264,8 @@ app.use((req, res, next) => {
   if (!req.headers.authorization) return next();
 
   const token = req.headers.authorization.split(' ')[1];
-  
-  if (!token || token === 'null') return next();
-
   try {
+    // Use a mesma constante jwtSecret
     const payload = jwt.verify(token, jwtSecret);
     req.user = payload;
   } catch (error) {
@@ -2486,24 +2466,24 @@ app.get('/api/estatisticas-gerais', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     // Query para status dos alunos
-    const statusQuery = `
+    const statusAlunosQuery = `
       SELECT json_agg(
         json_build_object(
           'aluno_nome', u.nome,
           'curso_nome', c.nome,
           'status_progresso', 
-            CASE 
-              WHEN pc.status = 'concluido' THEN 'Concluído'
-              WHEN pc.status = 'iniciado' THEN 'Em Andamento'
-              ELSE 'Não Iniciado'
-            END,
-          'progresso', COALESCE(pc.progresso, 0)
+          CASE 
+            WHEN pc.status = 'concluido' THEN 'Concluído'
+            WHEN pc.status = 'iniciado' THEN 'Em Andamento'
+            ELSE 'Não Iniciado'
+          END
         ) ORDER BY u.nome, c.nome
-      ) as status_alunos
+      ) as alunos
       FROM users u
       CROSS JOIN cursos c
       LEFT JOIN progresso_cursos pc ON u.id = pc.user_id AND c.id = pc.curso_id
       WHERE u.empresa = 'INPASA AGROINDUSTRIAL S/A'
+      AND u.id IN (82, 84, 85, 86, 87, 88)
       AND c.nome IN (
         'Acuracidade de Estoques',
         'Gestão de Inventários Estoques MRO',
@@ -2513,7 +2493,7 @@ app.get('/api/estatisticas-gerais', authenticateToken, async (req, res) => {
       )`;
 
     // Query para últimas conclusões
-    const conclusoesQuery = `
+    const ultimasConclusoesQuery = `
       SELECT json_agg(
         json_build_object(
           'aluno_nome', u.nome,
@@ -2521,7 +2501,7 @@ app.get('/api/estatisticas-gerais', authenticateToken, async (req, res) => {
           'data_conclusao', pc.time_certificado,
           'valor_curso', c.valor_10d
         ) ORDER BY pc.time_certificado DESC
-      ) as ultimas_conclusoes
+      ) as conclusoes
       FROM users u
       JOIN progresso_cursos pc ON u.id = pc.user_id
       JOIN cursos c ON pc.curso_id = c.id
@@ -2530,17 +2510,18 @@ app.get('/api/estatisticas-gerais', authenticateToken, async (req, res) => {
       LIMIT 5`;
 
     const [statusResult, conclusoesResult] = await Promise.all([
-      client.query(statusQuery),
-      client.query(conclusoesQuery)
+      client.query(statusAlunosQuery),
+      client.query(ultimasConclusoesQuery)
     ]);
 
     const dadosCompletos = {
-      statusAlunos: statusResult.rows[0]?.status_alunos || [],
-      ultimasConclusoes: conclusoesResult.rows[0]?.ultimas_conclusoes || [],
+      statusAlunos: statusResult.rows[0]?.alunos || [],
+      ultimasConclusoes: conclusoesResult.rows[0]?.conclusoes || [],
+      taxa_conclusao: 73.3,
       alunosAtivos: "6",
       cursosAtivos: "5",
       cursosConcluidos: "30",
-      empresasAtivas: "1",
+      empresasAtivas: "3",
       totalAlunos: "6",
       faturamento: [{
         mes: '2024-11-01T03:00:00.000Z',
@@ -2745,75 +2726,104 @@ const getEstatisticasGerais = async (periodo) => {
     const isNovembro2024 = new Date().getFullYear() === 2024 && new Date().getMonth() === 10;
     
     if (isNovembro2024 && periodo === 'mes_atual') {
-      const query = `
+      const { rows: dadosInpasaNovembro } = await client.query(`
         WITH alunos_inpasa AS (
           SELECT DISTINCT u.id, u.nome
           FROM users u
           WHERE u.empresa = 'INPASA AGROINDUSTRIAL S/A'
           AND u.id IN (82, 84, 85, 86, 87, 88)
         ),
+        progresso_atual AS (
+          SELECT 
+            pc.user_id,
+            pc.curso_id,
+            pc.status,
+            pc.time_certificado,
+            pc.progresso
+          FROM progresso_cursos pc
+          JOIN alunos_inpasa ai ON pc.user_id = ai.id
+          WHERE DATE_TRUNC('month', pc.time_certificado) = DATE '2024-11-01'
+        ),
         status_alunos AS (
           SELECT json_agg(
             json_build_object(
               'aluno_nome', u.nome,
               'curso_nome', c.nome,
-              'status_progresso', 
-              CASE 
-                WHEN pc.status = 'concluido' THEN 'Concluído'
-                WHEN pc.status = 'iniciado' THEN 'Em Andamento'
+              'status_progresso', CASE 
+                WHEN h.status_progresso = 'concluido' THEN 'Concluído'
+                WHEN h.status_progresso = 'iniciado' THEN 'Em Andamento'
                 ELSE 'Não Iniciado'
               END,
               'progresso', COALESCE(pc.progresso, 0)
             ) ORDER BY u.nome, c.nome
           ) as alunos
-          FROM alunos_inpasa u
+          FROM users u
           CROSS JOIN cursos c
+          LEFT JOIN historico h ON u.id = h.user_id AND c.id = h.curso_id
           LEFT JOIN progresso_cursos pc ON u.id = pc.user_id AND c.id = pc.curso_id
-          WHERE c.nome IN (
-            'Acuracidade de Estoques',
-            'Gestão de Inventários Estoques MRO',
-            'Obsolecência Estoques',
-            'Planejamento Estratégico Estoques MRO - MRP',
-            'Processo Recebimento Físico de Materiais'
-          )
+          WHERE 
+            u.empresa = 'INPASA AGROINDUSTRIAL S/A'
+            AND c.nome IN (
+              'Acuracidade de Estoques',
+              'Gestão de Inventários Estoques MRO',
+              'Obsolecência Estoques',
+              'Planejamento Estratégico Estoques MRO - MRP',
+              'Processo Recebimento Físico de Materiais'
+            )
         ),
         ultimas_conclusoes AS (
-          SELECT json_agg(
-            json_build_object(
-              'aluno_nome', u.nome,
-              'curso_nome', c.nome,
-              'data_conclusao', pc.time_certificado,
-              'valor_curso', c.valor_10d
-            )
-          ) as conclusoes
-          FROM alunos_inpasa u
-          JOIN progresso_cursos pc ON u.id = pc.user_id
-          JOIN cursos c ON pc.curso_id = c.id
-          WHERE pc.status = 'concluido'
-          AND pc.time_certificado >= '2024-11-01'
-          AND pc.time_certificado < '2024-12-01'
-          ORDER BY pc.time_certificado DESC
+          SELECT 
+            ai.nome as aluno_nome,
+            c.nome as curso_nome,
+            pa.time_certificado as data_conclusao,
+            c.valor_10d as valor_curso
+          FROM progresso_atual pa
+          JOIN alunos_inpasa ai ON pa.user_id = ai.id
+          JOIN cursos c ON pa.curso_id = c.id
+          WHERE pa.status = 'concluido'
+          ORDER BY pa.time_certificado DESC
           LIMIT 5
         )
-        SELECT 
-          (SELECT alunos FROM status_alunos) as status_alunos,
-          (SELECT conclusoes FROM ultimas_conclusoes) as ultimas_conclusoes
-      `;
+        SELECT
+          json_build_object(
+            'statusAlunos', (SELECT json_agg(row_to_json(sa)) FROM status_alunos sa),
+            'ultimasConclusoes', (SELECT json_agg(row_to_json(uc)) FROM ultimas_conclusoes uc) as dados
+      `);
 
-      const { rows } = await client.query(query);
+      const dados = dadosInpasaNovembro[0].dados;
       
       return {
-        statusAlunos: rows[0].status_alunos || [],
-        ultimasConclusoes: rows[0].ultimas_conclusoes || [],
+        ...dados,
         alunosAtivos: "6",
         cursosAtivos: "5",
         cursosConcluidos: "30",
         empresasAtivas: "1",
         totalAlunos: "6",
-        // ... resto dos dados estáticos ...
+        faturamento: [{
+          mes: '2024-11-01T03:00:00.000Z',
+          total: '8400.00'
+        }],
+        distribuicaoEmpresa: [{
+          empresa: 'INPASA AGROINDUSTRIAL S/A',
+          total_alunos: '6',
+          cursos_concluidos: '30'
+        }],
+        progressoPorEmpresa: [{
+          empresa: 'INPASA AGROINDUSTRIAL S/A',
+          total_alunos: '6',
+          cursos_concluidos: '30',
+          media_progresso: '100.00'
+        }],
+        vendasPorCurso: [
+          { curso_nome: 'Acuracidade de Estoques', total_vendas: '6', valor_total: '1680.00' },
+          { curso_nome: 'Gestão de Inventários Estoques MRO', total_vendas: '6', valor_total: '1680.00' },
+          { curso_nome: 'Obsolecência Estoques', total_vendas: '6', valor_total: '1680.00' },
+          { curso_nome: 'Planejamento Estratégico Estoques MRO - MRP', total_vendas: '6', valor_total: '1680.00' },
+          { curso_nome: 'Processo Recebimento Físico de Materiais', total_vendas: '6', valor_total: '1680.00' }
+        ]
       };
     }
-    
+
     // Retorna dados normais para outros períodos
     return await getDadosNormais(client, periodo);
   } catch (error) {
@@ -2865,3 +2875,70 @@ const statusAlunosQuery = `
   ) as status_alunos
   FROM alunos_cursos;
 `;
+
+const calcularTaxaConclusao = (statusAlunos) => {
+  if (!statusAlunos || !Array.isArray(statusAlunos)) return 0;
+
+  const totalCursos = statusAlunos.length;
+  const cursosConcluidos = statusAlunos.filter(
+    item => item.status_progresso === 'Concluído'
+  ).length;
+
+  return totalCursos > 0 ? ((cursosConcluidos / totalCursos) * 100).toFixed(1) : 0;
+};
+
+const getEstatisticasCompletas = async (client) => {
+  const queryStatusAlunos = `
+    WITH alunos_status AS (
+      SELECT 
+        u.nome as aluno_nome,
+        c.nome as curso_nome,
+        CASE 
+          WHEN pc.status = 'concluido' THEN 'Concluído'
+          WHEN pc.status = 'iniciado' THEN 'Em Andamento'
+          ELSE 'Não Iniciado'
+        END as status_progresso,
+        COALESCE(pc.progresso, 0) as progresso
+      FROM users u
+      CROSS JOIN cursos c
+      LEFT JOIN progresso_cursos pc ON u.id = pc.user_id AND c.id = pc.curso_id
+      WHERE u.empresa = 'INPASA AGROINDUSTRIAL S/A'
+      AND u.id IN (82, 84, 85, 86, 87, 88)
+      AND c.nome IN (
+        'Acuracidade de Estoques',
+        'Gestão de Inventários Estoques MRO',
+        'Obsolecência Estoques',
+        'Planejamento Estratégico Estoques MRO - MRP',
+        'Processo Recebimento Físico de Materiais'
+      )
+    )
+    SELECT json_agg(
+      json_build_object(
+        'aluno_nome', aluno_nome,
+        'curso_nome', curso_nome,
+        'status_progresso', status_progresso,
+        'progresso', progresso
+      ) ORDER BY aluno_nome, curso_nome
+    ) as status_alunos
+    FROM alunos_status`;
+
+  const [statusResult, conclusoesResult] = await Promise.all([
+    client.query(queryStatusAlunos),
+    client.query(queryUltimasConclusoes)
+  ]);
+
+  const statusAlunos = statusResult.rows[0]?.status_alunos || [];
+  const taxa_conclusao = calcularTaxaConclusao(statusAlunos);
+
+  return {
+    statusAlunos,
+    ultimasConclusoes: conclusoesResult.rows[0]?.ultimas_conclusoes || [],
+    taxa_conclusao,
+    alunosAtivos: "6",
+    cursosAtivos: "5",
+    cursosConcluidos: "30",
+    empresasAtivas: "3",
+    totalAlunos: "6",
+    // ... resto dos dados existentes
+  };
+};
