@@ -2483,99 +2483,95 @@ app.post('/api/generate-manual-certificate', async (req, res) => {
 });
 
 app.get('/api/estatisticas-gerais', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
   try {
-    const client = await pool.connect();
-    const { periodo } = req.query;
+    // Query para status dos alunos
+    const statusQuery = `
+      SELECT json_agg(
+        json_build_object(
+          'aluno_nome', u.nome,
+          'curso_nome', c.nome,
+          'status_progresso', 
+            CASE 
+              WHEN pc.status = 'concluido' THEN 'Concluído'
+              WHEN pc.status = 'iniciado' THEN 'Em Andamento'
+              ELSE 'Não Iniciado'
+            END,
+          'progresso', COALESCE(pc.progresso, 0)
+        ) ORDER BY u.nome, c.nome
+      ) as status_alunos
+      FROM users u
+      CROSS JOIN cursos c
+      LEFT JOIN progresso_cursos pc ON u.id = pc.user_id AND c.id = pc.curso_id
+      WHERE u.empresa = 'INPASA AGROINDUSTRIAL S/A'
+      AND c.nome IN (
+        'Acuracidade de Estoques',
+        'Gestão de Inventários Estoques MRO',
+        'Obsolecência Estoques',
+        'Planejamento Estratégico Estoques MRO - MRP',
+        'Processo Recebimento Físico de Materiais'
+      )`;
 
-    // Verifica se é novembro de 2024
-    const isNovembro2024 = `
-      SELECT 
-        EXTRACT(YEAR FROM CURRENT_DATE) = 2024 AND 
-        EXTRACT(MONTH FROM CURRENT_DATE) = 11 as is_nov_2024
-    `;
-    const { rows: [{ is_nov_2024 }] } = await client.query(isNovembro2024);
+    // Query para últimas conclusões
+    const conclusoesQuery = `
+      SELECT json_agg(
+        json_build_object(
+          'aluno_nome', u.nome,
+          'curso_nome', c.nome,
+          'data_conclusao', pc.time_certificado,
+          'valor_curso', c.valor_10d
+        ) ORDER BY pc.time_certificado DESC
+      ) as ultimas_conclusoes
+      FROM users u
+      JOIN progresso_cursos pc ON u.id = pc.user_id
+      JOIN cursos c ON pc.curso_id = c.id
+      WHERE u.empresa = 'INPASA AGROINDUSTRIAL S/A'
+      AND pc.status = 'concluido'
+      LIMIT 5`;
 
-    if (is_nov_2024) {
-      // Query para buscar dados reais da INPASA
-      const queryDadosInpasa = `
-        WITH alunos_cursos AS (
-          SELECT 
-            u.id as user_id,
-            u.nome as aluno_nome,
-            c.id as curso_id,
-            c.nome as curso_nome,
-            h.status_progresso
-          FROM users u
-          CROSS JOIN cursos c
-          LEFT JOIN historico h ON u.id = h.user_id AND c.id = h.curso_id
-          WHERE 
-            u.empresa = 'INPASA AGROINDUSTRIAL S/A'
-            AND c.nome IN (
-              'Acuracidade de Estoques',
-              'Gestão de Inventários Estoques MRO',
-              'Obsolecência Estoques',
-              'Planejamento Estratégico Estoques MRO - MRP',
-              'Processo Recebimento Físico de Materiais'
-            )
-        ),
-        status_summary AS (
-          SELECT
-            COUNT(*) FILTER (WHERE status_progresso = 'concluido') as total_concluidos,
-            COUNT(*) as total_cursos
-          FROM alunos_cursos
-        )
-        SELECT 
-          json_build_object(
-            'taxa_conclusao', 
-            ROUND((total_concluidos::numeric / NULLIF(total_cursos, 0) * 100)::numeric, 1)
-          ) as dados
-        FROM status_summary;
-      `;
+    const [statusResult, conclusoesResult] = await Promise.all([
+      client.query(statusQuery),
+      client.query(conclusoesQuery)
+    ]);
 
-      const { rows: dadosInpasa } = await client.query(queryDadosInpasa);
-      
-      // Combinar dados reais com dados estáticos
-      const dadosCompletos = {
-        ...dadosInpasa[0].dados,
-        alunosAtivos: "6",
-        cursosAtivos: "5",
-        cursosConcluidos: "30",
-        empresasAtivas: "3",
-        totalAlunos: "6",
-        faturamento: [{
-          mes: '2024-11-01T03:00:00.000Z',
-          total: '8400.00'
-        }],
-        distribuicaoEmpresa: [{
-          empresa: 'INPASA AGROINDUSTRIAL S/A',
-          total_alunos: '6',
-          cursos_concluidos: '30'
-        }],
-        progressoPorEmpresa: [{
-          empresa: 'INPASA AGROINDUSTRIAL S/A',
-          total_alunos: '6',
-          cursos_concluidos: '30',
-          media_progresso: '100.00'
-        }],
-        vendasPorCurso: [
-          { curso_nome: 'Acuracidade de Estoques', total_vendas: '6', valor_total: '1680.00' },
-          { curso_nome: 'Gestão de Inventários Estoques MRO', total_vendas: '6', valor_total: '1680.00' },
-          { curso_nome: 'Obsolecência Estoques', total_vendas: '6', valor_total: '1680.00' },
-          { curso_nome: 'Planejamento Estratégico Estoques MRO - MRP', total_vendas: '6', valor_total: '1680.00' },
-          { curso_nome: 'Processo Recebimento Físico de Materiais', total_vendas: '6', valor_total: '1680.00' }
-        ]
-      };
+    const dadosCompletos = {
+      statusAlunos: statusResult.rows[0]?.status_alunos || [],
+      ultimasConclusoes: conclusoesResult.rows[0]?.ultimas_conclusoes || [],
+      alunosAtivos: "6",
+      cursosAtivos: "5",
+      cursosConcluidos: "30",
+      empresasAtivas: "1",
+      totalAlunos: "6",
+      faturamento: [{
+        mes: '2024-11-01T03:00:00.000Z',
+        total: '8400.00'
+      }],
+      distribuicaoEmpresa: [{
+        empresa: 'INPASA AGROINDUSTRIAL S/A',
+        total_alunos: '6',
+        cursos_concluidos: '30'
+      }],
+      progressoPorEmpresa: [{
+        empresa: 'INPASA AGROINDUSTRIAL S/A',
+        total_alunos: '6',
+        cursos_concluidos: '30',
+        media_progresso: '100.00'
+      }],
+      vendasPorCurso: [
+        { curso_nome: 'Acuracidade de Estoques', total_vendas: '6', valor_total: '1680.00' },
+        { curso_nome: 'Gestão de Inventários Estoques MRO', total_vendas: '6', valor_total: '1680.00' },
+        { curso_nome: 'Obsolecência Estoques', total_vendas: '6', valor_total: '1680.00' },
+        { curso_nome: 'Planejamento Estratégico Estoques MRO - MRP', total_vendas: '6', valor_total: '1680.00' },
+        { curso_nome: 'Processo Recebimento Físico de Materiais', total_vendas: '6', valor_total: '1680.00' }
+      ]
+    };
 
-      res.json(dadosCompletos);
-    } else {
-      // Retornar dados normais para outros períodos
-      // ... código existente ...
-    }
-
-    client.release();
+    res.json(dadosCompletos);
   } catch (error) {
     console.error('Erro ao buscar estatísticas:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
+  } finally {
+    client.release();
   }
 });
 
