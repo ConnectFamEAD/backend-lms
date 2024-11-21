@@ -28,7 +28,7 @@ app.use('/pdf', express.static('pdfs'));
 app.use(express.json());
 
 // Defina a chave secreta no início do arquivo
-const JWT_SECRET = 'suus02201998##';
+
 
 // Função para validar CNPJ
 function validarCNPJ(cnpj) {
@@ -101,8 +101,12 @@ const authenticateToken = (req, res, next) => {
     ? authHeader.slice(7) 
     : authHeader;
 
+  if (!token || token === 'null') {
+    return res.status(401).json({ message: 'Token inválido' });
+  }
+
   try {
-    const decoded = jwt.verify(token, JWT_SECRET); // Alterado de JWT_SECRET para jwtSecret
+    const decoded = jwt.verify(token, jwtSecret);
     req.user = decoded;
     next();
   } catch (error) {
@@ -2269,8 +2273,10 @@ app.use((req, res, next) => {
   if (!req.headers.authorization) return next();
 
   const token = req.headers.authorization.split(' ')[1];
+  
+  if (!token || token === 'null') return next();
+
   try {
-    // Use a mesma constante jwtSecret
     const payload = jwt.verify(token, jwtSecret);
     req.user = payload;
   } catch (error) {
