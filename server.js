@@ -32,7 +32,7 @@ app.use(express.json());
 
 // Função para validar CNPJ
 function validarCNPJ(cnpj) {
-  cnpj = cnpj.replace(/[^\d]+/g, ''); // Remove caracteres não numéricos
+  cnpj = cnpj.replace(/[^\d]+/g, ''); // Remove caracteres n��o numéricos
 
   if (cnpj == '') return false;
 
@@ -91,27 +91,41 @@ mercadopago.configure({
 
 // Middleware para autenticação
 const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  
-  if (!authHeader) {
-    return res.status(401).json({ message: 'Token não fornecido' });
-  }
-
-  const token = authHeader.startsWith('Bearer ') 
-    ? authHeader.slice(7) 
-    : authHeader;
-
-  if (!token || token === 'null') {
-    return res.status(401).json({ message: 'Token inválido' });
-  }
-
   try {
-    const decoded = jwt.verify(token, jwtSecret);
-    req.user = decoded;
-    next();
+    const authHeader = req.headers['authorization'];
+    console.log('Auth Header:', authHeader); // Debug
+    
+    if (!authHeader) {
+      return res.status(401).json({ message: 'Token não fornecido' });
+    }
+
+    // Garante que o token está no formato correto
+    const token = authHeader.startsWith('Bearer ')
+      ? authHeader.split(' ')[1]
+      : authHeader;
+
+    console.log('Token extraído:', token); // Debug
+
+    if (!token || token === 'null' || token === 'undefined') {
+      return res.status(401).json({ message: 'Token inválido' });
+    }
+
+    try {
+      const decoded = jwt.verify(token, jwtSecret);
+      console.log('Token decodificado:', decoded); // Debug
+      req.user = decoded;
+      next();
+    } catch (error) {
+      console.error('Erro detalhado na verificação do token:', {
+        error: error.message,
+        token: token,
+        secret: jwtSecret
+      });
+      return res.status(403).json({ message: 'Token inválido' });
+    }
   } catch (error) {
-    console.error('Erro na verificação do token:', error);
-    return res.status(403).json({ message: 'Token inválido' });
+    console.error('Erro no middleware de autenticação:', error);
+    return res.status(500).json({ message: 'Erro interno do servidor' });
   }
 };
 
@@ -335,7 +349,7 @@ app.put('/api/users/atualizar-senhas', async (req, res) => {
 
 app.post('/api/user/verify-code', async (req, res) => {
   const { email, code } = req.body;
-  // Verifica se o código e o e-mail correspondem ao que está no banco
+  // Verifica se o código e o e-mail correspondem ao que est�� no banco
   const user = await pool.query('SELECT * FROM users WHERE email = $1 AND cod_rec = $2', [email, code]);
   if (user.rows.length > 0) {
     // Código correto, limpa o cod_rec e avisa o usuário para mudar a senha
