@@ -1758,7 +1758,7 @@ app.post("/api/user/login", async (req, res) => {
           const empresa = empresaResult.rows.length > 0 ? empresaResult.rows[0].empresa : null;
 
           // Login bem-sucedido como usuário normal
-          const token = jwt.sign({ userId: user.id, role: user.role, username: user.username, empresa: empresa }, JWT_SECRET, { expiresIn: '10h' });
+          const token = jwt.sign({ userId: user.id, role: user.role, username: user.username, empresa: empresa }, jwtSecret, { expiresIn: '10h' });
           console.log("Token gerado:", token);
           return res.json({
             success: true,
@@ -1801,7 +1801,7 @@ app.post("/api/user/login", async (req, res) => {
 
           if (senhaValida) {
             // Login bem-sucedido como empresa (Empresa)
-            const token = jwt.sign({ userId: empresa.id, role: 'Empresa', username: empresa.nome }, JWT_SECRET, { expiresIn: '10h' });
+            const token = jwt.sign({ userId: empresa.id, role: 'Empresa', username: empresa.nome }, jwtSecret, { expiresIn: '10h' });
             console.log("Token gerado:", token);
             return res.json({
               success: true,
