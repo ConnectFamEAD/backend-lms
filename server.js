@@ -3,7 +3,6 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt-nodejs');
 const { Pool } = require('pg');
-const jwtSecret = 'suus02201998##';
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 const fs = require('fs');
 const app = express();
@@ -92,22 +91,42 @@ mercadopago.configure({
 // Middleware para autenticação
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  
+  console.log('Auth Header:', authHeader); // Debug
+
   if (!authHeader) {
     return res.status(401).json({ message: 'Token não fornecido' });
   }
 
-  const token = authHeader.startsWith('Bearer ') 
-    ? authHeader.slice(7) 
-    : authHeader;
+  let token;
+  
+  // Verifica se o header começa com 'Bearer '
+  if (authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else {
+    token = authHeader;
+  }
+
+  console.log('Token extraído:', token); // Debug
+
+  if (!token) {
+    return res.status(401).json({ message: 'Token não encontrado no header' });
+  }
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
+    console.log('Token decodificado:', decoded); // Debug
     req.user = decoded;
     next();
   } catch (error) {
-    console.error('Erro na verificação do token:', error);
-    return res.status(403).json({ message: 'Token inválido' });
+    console.error('Erro detalhado na verificação do token:', {
+      error: error.message,
+      token: token,
+      secret: JWT_SECRET
+    });
+    return res.status(403).json({ 
+      message: 'Token inválido',
+      error: error.message 
+    });
   }
 };
 
