@@ -92,14 +92,17 @@ mercadopago.configure({
 // Middleware para autenticação
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
+  
+  if (!authHeader) {
     return res.status(401).json({ message: 'Token não fornecido' });
   }
 
+  const token = authHeader.startsWith('Bearer ') 
+    ? authHeader.slice(7) 
+    : authHeader;
+
   try {
-    const decoded = jwt.verify(token, JWT_SECRET); // Use a constante JWT_SECRET aqui
+    const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
     next();
   } catch (error) {
