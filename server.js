@@ -32,7 +32,7 @@ app.use(express.json());
 
 // Função para validar CNPJ
 function validarCNPJ(cnpj) {
-  cnpj = cnpj.replace(/[^\d]+/g, ''); // Remove caracteres n��o numéricos
+  cnpj = cnpj.replace(/[^\d]+/g, ''); // Remove caracteres n����o numéricos
 
   if (cnpj == '') return false;
 
@@ -93,18 +93,14 @@ mercadopago.configure({
 const authenticateToken = (req, res, next) => {
   try {
     const authHeader = req.headers['authorization'];
-    console.log('Auth Header:', authHeader); // Debug
     
     if (!authHeader) {
       return res.status(401).json({ message: 'Token não fornecido' });
     }
 
-    // Garante que o token está no formato correto
     const token = authHeader.startsWith('Bearer ')
       ? authHeader.split(' ')[1]
       : authHeader;
-
-    console.log('Token extraído:', token); // Debug
 
     if (!token || token === 'null' || token === 'undefined') {
       return res.status(401).json({ message: 'Token inválido' });
@@ -112,14 +108,12 @@ const authenticateToken = (req, res, next) => {
 
     try {
       const decoded = jwt.verify(token, jwtSecret);
-      console.log('Token decodificado:', decoded); // Debug
       req.user = decoded;
       next();
     } catch (error) {
-      console.error('Erro detalhado na verificação do token:', {
+      console.error('Erro na verificação do token:', {
         error: error.message,
-        token: token,
-        secret: jwtSecret
+        token: token
       });
       return res.status(403).json({ message: 'Token inválido' });
     }
@@ -1192,14 +1186,15 @@ app.post('/login', async (req, res) => {
       const user = result.rows[0];
       
       if (bcrypt.compareSync(password, user.senha)) {
+        // Gerar token JWT
         const token = jwt.sign(
           { 
-            id: user.id, 
-            username: user.username, 
-            role: user.role 
+            userId: user.id, 
+            role: user.role, 
+            username: user.username 
           }, 
-          JWT_SECRET,
-          { expiresIn: '24h' }
+          jwtSecret, 
+          { expiresIn: '10h' }
         );
 
         res.json({
