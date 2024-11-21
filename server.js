@@ -1790,7 +1790,7 @@ app.post("/api/user/login", async (req, res) => {
         const empresa = empresaResults.rows[0];
         console.log("Empresa encontrada:", empresa);
 
-        // Usando bcrypt-nodejs para comparar senhas
+        // Usando bcrypt-no dejs para comparar senhas
         bcrypt.compare(senha, empresa.senha, (err, senhaValida) => {
           if (err) {
             console.error("Erro ao comparar senhas:", err);
