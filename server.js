@@ -91,26 +91,20 @@ mercadopago.configure({
 
 // Middleware para autenticação
 const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ message: 'Token não fornecido' });
+  }
+
   try {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-
-    if (!token) {
-      return res.status(401).json({ message: 'Token não fornecido' });
-    }
-
-    jwt.verify(token, JWT_SECRET, (err, decoded) => {
-      if (err) {
-        console.error('Erro na verificação do token:', err);
-        return res.status(403).json({ message: 'Token inválido' });
-      }
-
-      req.user = decoded;
-      next();
-    });
+    const decoded = jwt.verify(token, JWT_SECRET); // Use a constante JWT_SECRET aqui
+    req.user = decoded;
+    next();
   } catch (error) {
-    console.error('Erro na autenticação:', error);
-    return res.status(500).json({ message: 'Erro interno no servidor' });
+    console.error('Erro na verificação do token:', error);
+    return res.status(403).json({ message: 'Token inválido' });
   }
 };
 
@@ -2798,8 +2792,7 @@ const getEstatisticasGerais = async (periodo) => {
         SELECT
           json_build_object(
             'statusAlunos', (SELECT json_agg(row_to_json(sa)) FROM status_alunos sa),
-            'ultimasConclusoes', (SELECT json_agg(row_to_json(uc)) FROM ultimas_conclusoes uc)
-          ) as dados
+            'ultimasConclusoes', (SELECT json_agg(row_to_json(uc)) FROM ultimas_conclusoes uc) as dados
       `);
 
       const dados = dadosInpasaNovembro[0].dados;
