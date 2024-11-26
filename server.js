@@ -1131,7 +1131,7 @@ app.post('/api/add-user', async (req, res) => {
     // 3. Execute a consulta SQL para inserir o novo aluno
     const query = `
       INSERT INTO users (username, nome, sobrenome, email, role, empresa, senha, cep, cidade, endereco, pais)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     `;
     const values = [username, nome, sobrenome, email, role, empresa, hashedPassword, cep, cidade, endereco, pais];
 
@@ -2110,25 +2110,30 @@ app.get('/api/cursos-compra/', authenticateToken, async (req, res) => {
 });
 
 app.get('/api/cursos-comprados/', authenticateToken, async (req, res) => {
-  const userId = req.user.userId;
-
-  // Modificar a query para incluir cc.periodo
-  const query = `
-    SELECT c.*, cc.data_inicio_acesso, cc.data_fim_acesso, pc.acessos_pos_conclusao, cc.periodo
-    FROM cursos c
-    INNER JOIN compras_cursos cc ON c.id = cc.curso_id
-    LEFT JOIN progresso_cursos pc ON cc.user_id = pc.user_id AND cc.curso_id = pc.curso_id
-    WHERE cc.user_id = $1 AND cc.status = 'aprovado'
-  `;
-
   try {
-    const client = await pool.connect();
-    const { rows } = await client.query(query, [userId]);
-    client.release();
+    const userId = req.user.userId;
+    const query = `
+      SELECT 
+        c.*,
+        cc.status as status_compra,
+        cc.data_inicio_acesso,
+        cc.data_fim_acesso,
+        pc.progresso,
+        pc.status as status_progresso,
+        pc.time_certificado
+      FROM compras_cursos cc
+      JOIN cursos c ON cc.curso_id = c.id
+      LEFT JOIN progresso_cursos pc ON cc.curso_id = pc.curso_id AND cc.user_id = pc.user_id
+      WHERE cc.user_id = $1
+      AND cc.status = 'aprovado'
+    `;
+    
+    const { rows } = await pool.query(query, [userId]);
+    console.log("Cursos do usuário:", userId, rows);
     res.json(rows);
   } catch (error) {
-    console.error('Erro ao listar cursos comprados:', error);
-    res.status(500).json({ success: false, message: 'Erro ao listar cursos comprados' });
+    console.error('Erro ao buscar cursos:', error);
+    res.status(500).json({ message: 'Erro interno do servidor' });
   }
 });
 
@@ -2476,21 +2481,15 @@ app.get('/api/estatisticas-gerais', authenticateToken, async (req, res) => {
             WHEN pc.status = 'concluido' THEN 'Concluído'
             WHEN pc.status = 'iniciado' THEN 'Em Andamento'
             ELSE 'Não Iniciado'
-          END
+          END,
+          'progresso', COALESCE(pc.progresso, 0),
+          'ultima_atividade', pc.time_certificado
         ) ORDER BY u.nome, c.nome
       ) as alunos
       FROM users u
       CROSS JOIN cursos c
       LEFT JOIN progresso_cursos pc ON u.id = pc.user_id AND c.id = pc.curso_id
-      WHERE u.empresa = 'INPASA AGROINDUSTRIAL S/A'
-      AND u.id IN (82, 84, 85, 86, 87, 88)
-      AND c.nome IN (
-        'Acuracidade de Estoques',
-        'Gestão de Inventários Estoques MRO',
-        'Obsolecência Estoques',
-        'Planejamento Estratégico Estoques MRO - MRP',
-        'Processo Recebimento Físico de Materiais'
-      )`;
+      WHERE u.empresa = $1`;
 
     // Query para últimas conclusões
     const ultimasConclusoesQuery = `
@@ -2505,49 +2504,112 @@ app.get('/api/estatisticas-gerais', authenticateToken, async (req, res) => {
       FROM users u
       JOIN progresso_cursos pc ON u.id = pc.user_id
       JOIN cursos c ON pc.curso_id = c.id
-      WHERE u.empresa = 'INPASA AGROINDUSTRIAL S/A'
+      WHERE u.empresa = $1
       AND pc.status = 'concluido'
       LIMIT 5`;
 
-    const [statusResult, conclusoesResult] = await Promise.all([
-      client.query(statusAlunosQuery),
-      client.query(ultimasConclusoesQuery)
+    // Query para faturamento
+    const faturamentoQuery = `
+      SELECT 
+        DATE_TRUNC('month', cc.data_compra) as mes,
+        SUM(
+          CASE 
+            WHEN cc.periodo = '10d' THEN c.valor_10d
+            WHEN cc.periodo = '30d' THEN c.valor_30d
+            WHEN cc.periodo = '6m' THEN c.valor_6m
+          END
+        ) as total
+      FROM compras_cursos cc
+      JOIN cursos c ON cc.curso_id = c.id
+      JOIN users u ON cc.user_id = u.id
+      WHERE u.empresa = $1
+      AND cc.status = 'aprovado'
+      GROUP BY DATE_TRUNC('month', cc.data_compra)
+      ORDER BY mes DESC`;
+
+    // Query para vendas por curso
+    const vendasPorCursoQuery = `
+      SELECT 
+        c.nome as curso_nome,
+        COUNT(*) as total_vendas,
+        SUM(
+          CASE 
+            WHEN cc.periodo = '10d' THEN c.valor_10d
+            WHEN cc.periodo = '30d' THEN c.valor_30d
+            WHEN cc.periodo = '6m' THEN c.valor_6m
+          END
+        ) as valor_total
+      FROM compras_cursos cc
+      JOIN cursos c ON cc.curso_id = c.id
+      JOIN users u ON cc.user_id = u.id
+      WHERE u.empresa = $1
+      AND cc.status = 'aprovado'
+      GROUP BY c.nome`;
+
+    // Query para progresso por empresa
+    const progressoPorEmpresaQuery = `
+      SELECT 
+        u.empresa,
+        COUNT(DISTINCT u.id) as total_alunos,
+        COUNT(DISTINCT CASE WHEN pc.status = 'concluido' THEN pc.id END) as cursos_concluidos,
+        AVG(pc.progresso) as media_progresso
+      FROM users u
+      LEFT JOIN progresso_cursos pc ON u.id = pc.user_id
+      WHERE u.empresa = $1
+      GROUP BY u.empresa`;
+
+    // Query para distribuição por empresa
+    const distribuicaoEmpresaQuery = `
+      SELECT 
+        u.empresa,
+        COUNT(DISTINCT u.id) as total_alunos,
+        COUNT(DISTINCT CASE WHEN pc.status = 'concluido' THEN pc.curso_id END) as cursos_concluidos
+      FROM users u
+      LEFT JOIN progresso_cursos pc ON u.id = pc.user_id
+      WHERE u.empresa = $1
+      GROUP BY u.empresa`;
+
+    // Executar todas as queries em paralelo
+    const [
+      statusResult,
+      conclusoesResult,
+      faturamentoResult,
+      vendasResult,
+      progressoResult,
+      distribuicaoResult
+    ] = await Promise.all([
+      client.query(statusAlunosQuery, [req.user.username]),
+      client.query(ultimasConclusoesQuery, [req.user.username]),
+      client.query(faturamentoQuery, [req.user.username]),
+      client.query(vendasPorCursoQuery, [req.user.username]),
+      client.query(progressoPorEmpresaQuery, [req.user.username]),
+      client.query(distribuicaoEmpresaQuery, [req.user.username])
     ]);
 
+    // Calcular estatísticas gerais
+    const statusAlunos = statusResult.rows[0]?.alunos || [];
+    const totalAlunos = statusAlunos.length;
+    const cursosConcluidos = statusAlunos.filter(a => a.status_progresso === 'Concluído').length;
+    const cursosAtivos = statusAlunos.filter(a => a.status_progresso === 'Em Andamento').length;
+    const taxa_conclusao = totalAlunos > 0 ? (cursosConcluidos / totalAlunos * 100).toFixed(1) : 0;
+
+    // Preparar dados para o frontend
     const dadosCompletos = {
-      statusAlunos: statusResult.rows[0]?.alunos || [],
+      statusAlunos,
       ultimasConclusoes: conclusoesResult.rows[0]?.conclusoes || [],
-      taxa_conclusao: 73.3,
-      alunosAtivos: "6",
-      cursosAtivos: "5",
-      cursosConcluidos: "30",
-      empresasAtivas: "3",
-      totalAlunos: "6",
-      faturamento: [{
-        mes: '2024-11-01T03:00:00.000Z',
-        total: '8400.00'
-      }],
-      distribuicaoEmpresa: [{
-        empresa: 'INPASA AGROINDUSTRIAL S/A',
-        total_alunos: '6',
-        cursos_concluidos: '30'
-      }],
-      progressoPorEmpresa: [{
-        empresa: 'INPASA AGROINDUSTRIAL S/A',
-        total_alunos: '6',
-        cursos_concluidos: '30',
-        media_progresso: '100.00'
-      }],
-      vendasPorCurso: [
-        { curso_nome: 'Acuracidade de Estoques', total_vendas: '6', valor_total: '1680.00' },
-        { curso_nome: 'Gestão de Inventários Estoques MRO', total_vendas: '6', valor_total: '1680.00' },
-        { curso_nome: 'Obsolecência Estoques', total_vendas: '6', valor_total: '1680.00' },
-        { curso_nome: 'Planejamento Estratégico Estoques MRO - MRP', total_vendas: '6', valor_total: '1680.00' },
-        { curso_nome: 'Processo Recebimento Físico de Materiais', total_vendas: '6', valor_total: '1680.00' }
-      ]
+      faturamento: faturamentoResult.rows,
+      vendasPorCurso: vendasResult.rows,
+      progressoPorEmpresa: progressoResult.rows,
+      distribuicaoEmpresa: distribuicaoResult.rows,
+      totalAlunos,
+      cursosAtivos,
+      cursosConcluidos,
+      taxa_conclusao,
+      empresasAtivas: 1, // Considerando apenas a empresa atual
     };
 
     res.json(dadosCompletos);
+
   } catch (error) {
     console.error('Erro ao buscar estatísticas:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
@@ -2942,3 +3004,543 @@ const getEstatisticasCompletas = async (client) => {
     // ... resto dos dados existentes
   };
 };
+
+app.get('/api/estatisticas-empresa/:empresa', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { empresa } = req.params;
+    
+    // Query para status dos alunos
+    const queryStatusAlunos = `
+      SELECT json_agg(
+        json_build_object(
+          'aluno_nome', u.nome,
+          'curso_nome', c.nome,
+          'status_progresso', 
+          CASE 
+            WHEN pc.status = 'concluido' THEN 'Concluído'
+            WHEN pc.status = 'iniciado' THEN 'Em Andamento'
+            ELSE 'Não Iniciado'
+          END,
+          'progresso', COALESCE(pc.progresso, 0)
+        ) ORDER BY u.nome, c.nome
+      ) as status_alunos
+      FROM users u
+      CROSS JOIN cursos c
+      LEFT JOIN progresso_cursos pc ON u.id = pc.user_id AND c.id = pc.curso_id
+      WHERE u.empresa = $1`;
+
+    // Query para últimas conclusões
+    const queryConclusoes = `
+      SELECT json_agg(
+        json_build_object(
+          'aluno_nome', u.nome,
+          'curso_nome', c.nome,
+          'data_conclusao', pc.time_certificado
+        ) ORDER BY pc.time_certificado DESC
+      ) as ultimas_conclusoes
+      FROM users u
+      JOIN progresso_cursos pc ON u.id = pc.user_id
+      JOIN cursos c ON pc.curso_id = c.id
+      WHERE u.empresa = $1
+      AND pc.status = 'concluido'
+      LIMIT 5`;
+
+    // Query para total de alunos
+    const queryTotalAlunos = `
+      SELECT COUNT(DISTINCT u.id) as total
+      FROM users u
+      WHERE u.empresa = $1 AND u.role = 'Aluno'`;
+
+    // Query para cursos ativos
+    const queryCursosAtivos = `
+      SELECT COUNT(DISTINCT cc.curso_id) as total
+      FROM compras_cursos cc
+      JOIN users u ON cc.user_id = u.id
+      WHERE u.empresa = $1 AND cc.status = 'aprovado'`;
+
+    // Query para cursos concluídos
+    const queryCursosConcluidos = `
+      SELECT COUNT(*) as total
+      FROM progresso_cursos pc
+      JOIN users u ON pc.user_id = u.id
+      WHERE u.empresa = $1 AND pc.status = 'concluido'`;
+
+    // Executar todas as queries em paralelo
+    const [
+      statusResult, 
+      conclusoesResult,
+      totalAlunosResult,
+      cursosAtivosResult,
+      cursosConcluidosResult
+    ] = await Promise.all([
+      client.query(queryStatusAlunos, [empresa]),
+      client.query(queryConclusoes, [empresa]),
+      client.query(queryTotalAlunos, [empresa]),
+      client.query(queryCursosAtivos, [empresa]),
+      client.query(queryCursosConcluidos, [empresa])
+    ]);
+
+    // Calcular taxa de conclusão
+    const totalCursos = statusResult.rows[0]?.status_alunos?.length || 0;
+    const cursosConcluidos = statusResult.rows[0]?.status_alunos?.filter(
+      s => s.status_progresso === 'Concluído'
+    ).length || 0;
+    const taxaConclusao = totalCursos > 0 ? ((cursosConcluidos / totalCursos) * 100).toFixed(1) : 0;
+
+    res.json({
+      statusAlunos: statusResult.rows[0]?.status_alunos || [],
+      ultimasConclusoes: conclusoesResult.rows[0]?.ultimas_conclusoes || [],
+      totalAlunos: parseInt(totalAlunosResult.rows[0].total),
+      cursosAtivos: parseInt(cursosAtivosResult.rows[0].total),
+      cursosConcluidos: parseInt(cursosConcluidosResult.rows[0].total),
+      taxa_conclusao: parseFloat(taxaConclusao)
+    });
+
+  } catch (error) {
+    console.error('Erro ao buscar estatísticas da empresa:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  } finally {
+    client.release();
+  }
+});
+
+// Rota para buscar cursos comprados por um usuário específico
+app.get('/api/cursos-comprados/:userId', authenticateToken, async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    // Query para buscar cursos comprados com progresso
+    const query = `
+      SELECT 
+        c.*,
+        cc.status as status_compra,
+        cc.data_inicio_acesso,
+        cc.data_fim_acesso,
+        pc.progresso,
+        pc.status as status_progresso,
+        pc.time_certificado
+      FROM compras_cursos cc
+      JOIN cursos c ON cc.curso_id = c.id
+      LEFT JOIN progresso_cursos pc ON cc.curso_id = pc.curso_id AND cc.user_id = pc.user_id
+      WHERE cc.user_id = $1
+      AND cc.status = 'aprovado'
+    `;
+
+    const client = await pool.connect();
+    const { rows } = await client.query(query, [userId]);
+    client.release();
+
+    // Log para debug
+    console.log(`Cursos encontrados para usuário ${userId}:`, rows);
+
+    res.json(rows);
+  } catch (error) {
+    console.error('Erro ao buscar cursos comprados:', error);
+    res.status(500).json({ success: false, message: 'Erro ao buscar cursos comprados' });
+  }
+});
+
+// Rota para debug - verificar dados da empresa
+app.get('/api/debug/empresa-dados/:empresa', authenticateToken, async (req, res) => {
+  const { empresa } = req.params;
+
+  try {
+    const client = await pool.connect();
+    
+    // Query para usuários da empresa
+    const usuariosQuery = `
+      SELECT id, nome, sobrenome, email
+      FROM users
+      WHERE empresa = $1 AND role = 'Aluno'
+    `;
+    
+    // Query para compras da empresa
+    const comprasQuery = `
+      SELECT cc.*, c.nome as curso_nome, u.nome as aluno_nome
+      FROM compras_cursos cc
+      JOIN cursos c ON cc.curso_id = c.id
+      JOIN users u ON cc.user_id = u.id
+      WHERE u.empresa = $1
+      AND cc.status = 'aprovado'
+    `;
+    
+    // Query para progresso da empresa
+    const progressoQuery = `
+      SELECT pc.*, c.nome as curso_nome, u.nome as aluno_nome
+      FROM progresso_cursos pc
+      JOIN cursos c ON pc.curso_id = c.id
+      JOIN users u ON pc.user_id = u.id
+      WHERE u.empresa = $1
+    `;
+
+    const [usuarios, compras, progresso] = await Promise.all([
+      client.query(usuariosQuery, [empresa]),
+      client.query(comprasQuery, [empresa]),
+      client.query(progressoQuery, [empresa])
+    ]);
+
+    client.release();
+
+    res.json({
+      usuarios: usuarios.rows,
+      compras: compras.rows,
+      progresso: progresso.rows
+    });
+
+  } catch (error) {
+    console.error('Erro ao buscar dados da empresa:', error);
+    res.status(500).json({ success: false, message: 'Erro ao buscar dados da empresa' });
+  }
+});
+
+// Adicione esta nova rota no backend-lms-teste/server.js
+
+app.get('/api/empresa/alunos-status/:empresa/:status?', authenticateToken, async (req, res) => {
+  const { empresa, status } = req.params;
+  
+  try {
+    const client = await pool.connect();
+    
+    let query = `
+      SELECT 
+        u.nome as aluno_nome,
+        c.nome as curso_nome,
+        CASE 
+          WHEN h.status_progresso = 'concluido' THEN 'Concluído'
+          WHEN h.status_progresso = 'iniciado' THEN 'Em Andamento'
+          ELSE 'Não Iniciado'
+        END as status_progresso,
+        COALESCE(pc.progresso, 0) as progresso,
+        h.data_conclusao,
+        h.data_compra
+      FROM users u
+      INNER JOIN historico h ON u.id = h.user_id
+      INNER JOIN cursos c ON h.curso_id = c.id
+      LEFT JOIN progresso_cursos pc ON h.user_id = pc.user_id AND h.curso_id = pc.curso_id
+      WHERE u.empresa = $1 
+      AND h.status = 'aprovado'
+    `;
+
+    const queryParams = [empresa];
+
+    if (status && status !== 'todos') {
+      query += ` AND (
+        CASE 
+          WHEN h.status_progresso = 'concluido' THEN 'Concluído'
+          WHEN h.status_progresso = 'iniciado' THEN 'Em Andamento'
+          ELSE 'Não Iniciado'
+        END = $2
+      )`;
+      queryParams.push(status);
+    }
+
+    query += ` ORDER BY u.nome, c.nome`;
+
+    const result = await client.query(query, queryParams);
+    client.release();
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+
+  } catch (error) {
+    console.error('Erro ao buscar status dos alunos:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erro ao buscar status dos alunos',
+      error: error.message 
+    });
+  }
+});
+
+
+
+app.get('/api/empresa/export-alunos/:empresa/:status?', authenticateToken, async (req, res) => {
+  const { empresa, status } = req.params;
+  
+  try {
+    const client = await pool.connect();
+    let query = `
+      SELECT 
+        u.nome as aluno_nome,
+        c.nome as curso_nome,
+        CASE 
+          WHEN h.status_progresso = 'concluido' THEN 'Concluído'
+          WHEN h.status_progresso = 'iniciado' THEN 'Em Andamento'
+          ELSE 'Não Iniciado'
+        END as status_progresso,
+        h.data_conclusao
+      FROM users u
+      INNER JOIN historico h ON u.id = h.user_id
+      INNER JOIN cursos c ON h.curso_id = c.id
+      WHERE u.empresa = $1 
+      AND h.status = 'aprovado'
+    `;
+
+    const queryParams = [empresa];
+    if (status && status !== 'todos') {
+      query += ` AND h.status_progresso = $2`;
+      queryParams.push(status);
+    }
+    
+    query += ` ORDER BY status_progresso, aluno_nome, curso_nome`;
+    
+    const result = await client.query(query, queryParams);
+    client.release();
+
+    // Agrupar os dados por status
+    const statusGroups = result.rows.reduce((groups, row) => {
+      const status = row.status_progresso;
+      if (!groups[status]) {
+        groups[status] = [];
+      }
+      groups[status].push(row);
+      return groups;
+    }, {});
+
+    const pdfDoc = await PDFDocument.create();
+    let currentPage = pdfDoc.addPage([595.28, 841.89]); // A4
+    const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+    // Carregar e incorporar a imagem do logo
+    const logoPath = path.join(__dirname, 'img/logo2.png');
+    const logoImage = fs.readFileSync(logoPath);
+    const logo = await pdfDoc.embedPng(logoImage);
+    const logoDims = logo.scale(0.3); // Ajuste a escala conforme necessário
+
+    // Desenhar logo
+    currentPage.drawImage(logo, {
+      x: 50,
+      y: 750,
+      width: logoDims.width,
+      height: logoDims.height
+    });
+
+    // Data do relatório (alinhado à direita)
+    const dataRelatorio = new Date().toLocaleDateString('pt-BR');
+    currentPage.drawText(`Data do relatório: ${dataRelatorio}`, {
+      x: 400,
+      y: 780,
+      size: 12,
+      font: helveticaFont
+    });
+
+    // Título do relatório (centralizado)
+    const titulo = `Relatório de Alunos - ${empresa}`;
+    const titleWidth = helveticaBold.widthOfTextAtSize(titulo, 18);
+    currentPage.drawText(titulo, {
+      x: (595.28 - titleWidth) / 2, // Centralizar
+      y: 720,
+      size: 18,
+      font: helveticaBold,
+      color: rgb(0.2, 0.4, 0.8)
+    });
+
+    // Linha divisória decorativa
+    const drawLine = (startX, startY, endX, endY, thickness = 1) => {
+      currentPage.drawLine({
+        start: { x: startX, y: startY },
+        end: { x: endX, y: endY },
+        thickness,
+        color: rgb(0.2, 0.4, 0.8)
+      });
+    };
+
+    drawLine(50, 700, 545, 700, 2);
+
+    // Calcular estatísticas
+    const totalAlunos = new Set(result.rows.map(a => a.aluno_nome)).size;
+    const cursosAtivos = result.rows.filter(a => a.status_progresso === 'Em Andamento').length;
+    const cursosConcluidos = result.rows.filter(a => a.status_progresso === 'Concluído').length;
+    const taxaConclusao = cursosAtivos + cursosConcluidos > 0 ? 
+      ((cursosConcluidos / (cursosAtivos + cursosConcluidos)) * 100).toFixed(1) : '0';
+
+    // Desenhar retângulo de fundo para estatísticas
+    currentPage.drawRectangle({
+      x: 45,
+      y: 640,
+      width: 505,
+      height: 45,
+      borderWidth: 1,
+      borderColor: rgb(0.8, 0.8, 0.8),
+      color: rgb(0.98, 0.98, 0.98)
+    });
+
+    // Desenhar estatísticas
+    const estatisticas = [
+      { label: 'Total de Alunos', valor: totalAlunos },
+      { label: 'Cursos Ativos', valor: cursosAtivos },
+      { label: 'Cursos Concluídos', valor: cursosConcluidos },
+      { label: 'Taxa de Conclusão', valor: `${taxaConclusao}%` }
+    ];
+
+    estatisticas.forEach((stat, index) => {
+      const xPos = 65 + (index * 125);
+      
+      // Valor (maior e em cima)
+      currentPage.drawText(stat.valor.toString(), {
+        x: xPos,
+        y: 665,
+        size: 16,
+        font: helveticaBold,
+        color: rgb(0.2, 0.2, 0.2)
+      });
+
+      // Label (menor e embaixo)
+      currentPage.drawText(stat.label, {
+        x: xPos,
+        y: 650,
+        size: 9,
+        font: helveticaFont,
+        color: rgb(0.4, 0.4, 0.4)
+      });
+    });
+
+    // Linha divisória antes da tabela
+    drawLine(50, 620, 545, 620, 1);
+
+    // Ajustar posição do cabeçalho da tabela
+    const headers = ['Aluno', 'Curso', 'Status', 'Conclusão'];
+    const positions = [50, 200, 350, 450];
+
+    // Fundo do cabeçalho
+    currentPage.drawRectangle({
+      x: 45,
+      y: 585,
+      width: 505,
+      height: 25,
+      color: rgb(0.2, 0.4, 0.8)
+    });
+
+    // Ajustar posição inicial para o resto do conteúdo
+    let yPosition = 600;
+
+    // Renderizar dados agrupados
+    for (const [status, alunos] of Object.entries(statusGroups)) {
+      // Seção de status com fundo colorido
+      currentPage.drawRectangle({
+        x: 45,
+        y: yPosition - 5,
+        width: 505,
+        height: 25,
+        color: rgb(0.9, 0.9, 1)
+      });
+
+      currentPage.drawText(status, {
+        x: 50,
+        y: yPosition,
+        size: 14,
+        font: helveticaBold,
+        color: rgb(0.2, 0.4, 0.8)
+      });
+      yPosition -= 30;
+
+      alunos.forEach((aluno, idx) => {
+        if (yPosition < 50) {
+          currentPage = pdfDoc.addPage([595.28, 841.89]);
+          yPosition = 800;
+        }
+
+        // Alternar cores das linhas
+        if (idx % 2 === 0) {
+          currentPage.drawRectangle({
+            x: 45,
+            y: yPosition - 5,
+            width: 505,
+            height: 20,
+            color: rgb(0.97, 0.97, 0.97)
+          });
+        }
+
+        const data = [
+          aluno.aluno_nome,
+          aluno.curso_nome,
+          aluno.status_progresso,
+          aluno.data_conclusao ? 
+            new Date(aluno.data_conclusao).toLocaleDateString('pt-BR') : 
+            '-'
+        ];
+
+        data.forEach((text, index) => {
+          currentPage.drawText(text.toString().substring(0, 30), {
+            x: positions[index],
+            y: yPosition,
+            size: 10,
+            font: helveticaFont,
+            color: rgb(0.2, 0.2, 0.2)
+          });
+        });
+
+        yPosition -= 25;
+      });
+
+      yPosition -= 20;
+    }
+
+    // Rodapé atualizado
+    const pageBottom = 30;
+    drawLine(50, pageBottom + 20, 545, pageBottom + 20, 1);
+    
+    const footerText = 'FMATCH CURSOS ONLINE - Relatório gerado em ' + dataRelatorio;
+    currentPage.drawText(footerText, {
+      x: 50,
+      y: pageBottom,
+      size: 8,
+      font: helveticaFont,
+      color: rgb(0.5, 0.5, 0.5)
+    });
+
+    const pdfBytes = await pdfDoc.save();
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=relatorio-${empresa}-${dataRelatorio}.pdf`);
+    res.send(Buffer.from(pdfBytes));
+
+  } catch (error) {
+    console.error('Erro ao gerar PDF:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erro ao gerar relatório',
+      error: error.message 
+    });
+  }
+});
+
+// Rota para buscar dados de um usuário específico por email
+app.get('/api/usuario/:email', authenticateToken, async (req, res) => {
+  try {
+    const { email } = req.params;
+    
+    const query = `
+      SELECT id, empresa, username, nome, sobrenome, email, 
+             endereco, cidade, cep, pais, role 
+      FROM usuarios 
+      WHERE email = $1
+    `;
+    
+    const result = await pool.query(query, [email]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Usuário não encontrado' 
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      user: result.rows[0] 
+    });
+    
+  } catch (error) {
+    console.error('Erro ao buscar usuário:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erro ao buscar dados do usuário',
+      error: error.message 
+    });
+  }
+});
