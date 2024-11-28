@@ -2504,231 +2504,154 @@ app.post('/api/generate-manual-certificate', async (req, res) => {
   }
 });
 
-app.get('/api/estatisticas-gerais', authenticateToken, async (req, res) => {
+app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    // Query para status dos alunos
+    const [ano, mes] = req.params.periodo.split('-');
+    
+    // Query para status dos alunos do mês
     const statusAlunosQuery = `
-      SELECT json_agg(
-        json_build_object(
-          'aluno_nome', u.nome,
-          'curso_nome', c.nome,
-          'status_progresso', 
-          CASE 
-            WHEN pc.status = 'concluido' THEN 'Concluído'
-            WHEN pc.status = 'iniciado' THEN 'Em Andamento'
-            ELSE 'Não Iniciado'
-          END,
-          'progresso', COALESCE(pc.progresso, 0),
-          'ultima_atividade', pc.time_certificado
-        ) ORDER BY u.nome, c.nome
-      ) as alunos
-      FROM users u
-      CROSS JOIN cursos c
-      LEFT JOIN progresso_cursos pc ON u.id = pc.user_id AND c.id = pc.curso_id
-      WHERE u.empresa = $1`;
-
-    // Query para últimas conclusões
-    const ultimasConclusoesQuery = `
-      SELECT json_agg(
-        json_build_object(
-          'aluno_nome', u.nome,
-          'curso_nome', c.nome,
-          'data_conclusao', pc.time_certificado,
-          'valor_curso', c.valor_10d
-        ) ORDER BY pc.time_certificado DESC
-      ) as conclusoes
-      FROM users u
-      JOIN progresso_cursos pc ON u.id = pc.user_id
-      JOIN cursos c ON pc.curso_id = c.id
-      WHERE u.empresa = $1
-      AND pc.status = 'concluido'
-      LIMIT 5`;
-
-    // Query para faturamento
-    const faturamentoQuery = `
       SELECT 
-        DATE_TRUNC('month', cc.data_compra) as mes,
-        SUM(
-          CASE 
-            WHEN cc.periodo = '10d' THEN c.valor_10d
-            WHEN cc.periodo = '30d' THEN c.valor_30d
-            WHEN cc.periodo = '6m' THEN c.valor_6m
-          END
-        ) as total
-      FROM compras_cursos cc
-      JOIN cursos c ON cc.curso_id = c.id
-      JOIN users u ON cc.user_id = u.id
-      WHERE u.empresa = $1
-      AND cc.status = 'aprovado'
-      GROUP BY DATE_TRUNC('month', cc.data_compra)
-      ORDER BY mes DESC`;
+        u.nome as aluno_nome,
+        c.nome as curso_nome,
+        u.empresa,
+        h.status_progresso,
+        h.data_conclusao,
+        h.data_aprovacao
+      FROM historico h
+      JOIN users u ON h.user_id = u.id
+      JOIN cursos c ON h.curso_id = c.id
+      WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+      AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+      AND h.status = 'aprovado'
+      ORDER BY u.nome, c.nome;
+    `;
+
+    // Query para métricas gerais do mês (incluindo taxa de conclusão)
+    const metricasQuery = `
+      WITH metricas_mes AS (
+        SELECT 
+          COUNT(DISTINCT h.user_id) as total_alunos,
+          COUNT(*) as total_cursos,
+          COUNT(CASE WHEN h.status_progresso = 'concluido' THEN 1 END) as cursos_concluidos,
+          COUNT(CASE WHEN h.status_progresso = 'iniciado' THEN 1 END) as cursos_em_andamento
+        FROM historico h
+        WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+        AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+        AND h.status = 'aprovado'
+      )
+      SELECT 
+        total_alunos,
+        total_cursos,
+        cursos_concluidos,
+        cursos_em_andamento,
+        CASE 
+          WHEN total_cursos > 0 THEN 
+            ROUND((cursos_concluidos::numeric / total_cursos) * 100, 2)
+          ELSE 0 
+        END as taxa_conclusao
+      FROM metricas_mes;
+    `;
 
     // Query para vendas por curso
     const vendasPorCursoQuery = `
       SELECT 
         c.nome as curso_nome,
         COUNT(*) as total_vendas,
-        SUM(
-          CASE 
-            WHEN cc.periodo = '10d' THEN c.valor_10d
-            WHEN cc.periodo = '30d' THEN c.valor_30d
-            WHEN cc.periodo = '6m' THEN c.valor_6m
-          END
-        ) as valor_total
-      FROM compras_cursos cc
-      JOIN cursos c ON cc.curso_id = c.id
-      JOIN users u ON cc.user_id = u.id
-      WHERE u.empresa = $1
-      AND cc.status = 'aprovado'
-      GROUP BY c.nome`;
+        SUM(c.valor_10d) as valor_total,
+        COUNT(CASE WHEN h.status_progresso = 'concluido' THEN 1 END) as concluidos,
+        COUNT(CASE WHEN h.status_progresso = 'iniciado' THEN 1 END) as em_andamento
+      FROM historico h
+      JOIN cursos c ON h.curso_id = c.id
+      WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+      AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+      AND h.status = 'aprovado'
+      GROUP BY c.id, c.nome
+      ORDER BY c.nome;
+    `;
 
-    // Query para progresso por empresa
-    const progressoPorEmpresaQuery = `
+    // Query para faturamento total
+    const faturamentoQuery = `
       SELECT 
-        u.empresa,
-        COUNT(DISTINCT u.id) as total_alunos,
-        COUNT(DISTINCT CASE WHEN pc.status = 'concluido' THEN pc.id END) as cursos_concluidos,
-        AVG(pc.progresso) as media_progresso
-      FROM users u
-      LEFT JOIN progresso_cursos pc ON u.id = pc.user_id
-      WHERE u.empresa = $1
-      GROUP BY u.empresa`;
+        DATE_TRUNC('month', h.data_aprovacao) as mes,
+        SUM(c.valor_10d) as faturamento_total
+      FROM historico h
+      JOIN cursos c ON h.curso_id = c.id
+      WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+      AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+      AND h.status = 'aprovado'
+      GROUP BY DATE_TRUNC('month', h.data_aprovacao);
+    `;
 
-    // Query para distribuição por empresa
-    const distribuicaoEmpresaQuery = `
-      SELECT 
-        u.empresa,
-        COUNT(DISTINCT u.id) as total_alunos,
-        COUNT(DISTINCT CASE WHEN pc.status = 'concluido' THEN pc.curso_id END) as cursos_concluidos
-      FROM users u
-      LEFT JOIN progresso_cursos pc ON u.id = pc.user_id
-      WHERE u.empresa = $1
-      GROUP BY u.empresa`;
-
-    // Executar todas as queries em paralelo
-    const [
-      statusResult,
-      conclusoesResult,
-      faturamentoResult,
-      vendasResult,
-      progressoResult,
-      distribuicaoResult
-    ] = await Promise.all([
-      client.query(statusAlunosQuery, [req.user.username]),
-      client.query(ultimasConclusoesQuery, [req.user.username]),
-      client.query(faturamentoQuery, [req.user.username]),
-      client.query(vendasPorCursoQuery, [req.user.username]),
-      client.query(progressoPorEmpresaQuery, [req.user.username]),
-      client.query(distribuicaoEmpresaQuery, [req.user.username])
+    // Executar todas as queries
+    const [statusResult, metricasResult, vendasResult, faturamentoResult] = await Promise.all([
+      client.query(statusAlunosQuery, [ano, mes]),
+      client.query(metricasQuery, [ano, mes]),
+      client.query(vendasPorCursoQuery, [ano, mes]),
+      client.query(faturamentoQuery, [ano, mes])
     ]);
 
-    // Calcular estatísticas gerais
-    const statusAlunos = statusResult.rows[0]?.alunos || [];
-    const totalAlunos = statusAlunos.length;
-    const cursosConcluidos = statusAlunos.filter(a => a.status_progresso === 'Concluído').length;
-    const cursosAtivos = statusAlunos.filter(a => a.status_progresso === 'Em Andamento').length;
-    const taxa_conclusao = totalAlunos > 0 ? (cursosConcluidos / totalAlunos * 100).toFixed(1) : 0;
+    // Log dos resultados
+    console.log('\n=== Métricas do Mês ===');
+    console.log(metricasResult.rows[0]);
 
-    // Preparar dados para o frontend
-    const dadosCompletos = {
-      statusAlunos,
-      ultimasConclusoes: conclusoesResult.rows[0]?.conclusoes || [],
-      faturamento: faturamentoResult.rows,
-      vendasPorCurso: vendasResult.rows,
-      progressoPorEmpresa: progressoResult.rows,
-      distribuicaoEmpresa: distribuicaoResult.rows,
-      totalAlunos,
-      cursosAtivos,
-      cursosConcluidos,
-      taxa_conclusao,
-      empresasAtivas: 1, // Considerando apenas a empresa atual
-    };
+    console.log('\n=== Status dos Alunos ===');
+    console.log(`Total de registros: ${statusResult.rows.length}`);
 
-    res.json(dadosCompletos);
+    // Preparar resposta
+    const faturamentoTotal = faturamentoResult.rows[0]?.faturamento_total || 0;
+    const metricas = metricasResult.rows[0];
+
+    res.json({
+      // Métricas gerais
+      metricas: {
+        totalAlunos: parseInt(metricas.total_alunos),
+        totalCursos: parseInt(metricas.total_cursos),
+        cursosConcluidos: parseInt(metricas.cursos_concluidos),
+        cursosEmAndamento: parseInt(metricas.cursos_em_andamento),
+        taxaConclusao: parseFloat(metricas.taxa_conclusao)
+      },
+
+      // Status dos alunos
+      statusAlunos: statusResult.rows.map(row => ({
+        aluno_nome: row.aluno_nome,
+        curso_nome: row.curso_nome,
+        empresa: row.empresa,
+        status: row.status_progresso === 'concluido' ? 'Concluído' : 
+               row.status_progresso === 'iniciado' ? 'Em Andamento' : 
+               'Não Iniciado',
+        data_conclusao: row.data_conclusao
+      })),
+
+      // Faturamento
+      faturamento: [{
+        mes: faturamentoResult.rows[0]?.mes,
+        total: faturamentoTotal,
+        distribuicao: {
+          felipe: faturamentoTotal * 0.4,
+          amadeu: faturamentoTotal * 0.4,
+          matheus: faturamentoTotal * 0.1,
+          empresa: faturamentoTotal * 0.1
+        }
+      }],
+
+      // Vendas por curso
+      vendasPorCurso: vendasResult.rows.map(venda => ({
+        curso_nome: venda.curso_nome,
+        total_vendas: parseInt(venda.total_vendas),
+        valor_total: parseFloat(venda.valor_total),
+        concluidos: parseInt(venda.concluidos),
+        em_andamento: parseInt(venda.em_andamento)
+      }))
+    });
 
   } catch (error) {
     console.error('Erro ao buscar estatísticas:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    res.status(500).json({ error: error.message });
   } finally {
     client.release();
   }
 });
-
-
-// Query para Status dos Cursos (Novembro 2024)
-const statusCursosQuery = `
-  SELECT 
-    status_progresso,
-    CASE 
-      WHEN EXTRACT(YEAR FROM CURRENT_DATE) = 2024 
-      AND EXTRACT(MONTH FROM CURRENT_DATE) = 11 
-      AND status_progresso = 'concluido' THEN 30
-      WHEN EXTRACT(YEAR FROM CURRENT_DATE) = 2024 
-      AND EXTRACT(MONTH FROM CURRENT_DATE) = 11 THEN 0
-      ELSE COUNT(*)
-    END as quantidade
-  FROM progresso_cursos pc
-  JOIN historico h ON pc.user_id = h.user_id AND pc.curso_id = h.curso_id
-  WHERE h.status = 'aprovado'
-  GROUP BY status_progresso;
-`;
-
-// Query para Total de Alunos (Novembro 2024)
-const totalAlunosQuery = `
-  SELECT 
-    CASE 
-      WHEN EXTRACT(YEAR FROM CURRENT_DATE) = 2024 
-      AND EXTRACT(MONTH FROM CURRENT_DATE) = 11 THEN 6
-      ELSE COUNT(DISTINCT user_id)::text
-    END as total
-  FROM historico
-  WHERE status = 'aprovado';
-`;
-
-// Query para Vendas por Curso (Novembro 2024)
-const vendasPorCursoQuery = `
-  WITH mes_atual AS (
-    SELECT DATE_TRUNC('month', CURRENT_DATE) as inicio
-  )
-  SELECT 
-    CASE 
-      WHEN DATE_TRUNC('month', CURRENT_DATE) = DATE '2024-11-01' THEN
-        json_build_array(
-          json_build_object('curso_nome', 'Acuracidade de Estoques', 'total_vendas', '6', 'valor_total', '1680.00'),
-          json_build_object('curso_nome', 'Gestão de Inventários Estoques MRO', 'total_vendas', '6', 'valor_total', '1680.00'),
-          json_build_object('curso_nome', 'Obsolecência Estoques', 'total_vendas', '6', 'valor_total', '1680.00'),
-          json_build_object('curso_nome', 'Planejamento Estratégico Estoques MRO - MRP', 'total_vendas', '6', 'valor_total', '1680.00'),
-          json_build_object('curso_nome', 'Processo Recebimento Físico de Materiais', 'total_vendas', '6', 'valor_total', '1680.00')
-        )
-      ELSE
-        array_agg(
-          json_build_object(
-            'curso_nome', curso_nome,
-            'total_vendas', total_vendas,
-            'valor_total', valor_total
-          )
-        )
-    END as vendas_cursos
-  FROM (
-    SELECT 
-      c.nome as curso_nome,
-      COUNT(DISTINCT h.user_id) as total_vendas,
-      SUM(
-        CASE 
-          WHEN cc.periodo = '10d' THEN c.valor_10d
-          WHEN cc.periodo = '15d' THEN c.valor_15d
-          WHEN cc.periodo = '30d' THEN c.valor_30d
-          WHEN cc.periodo = '6m' THEN c.valor_6m
-        END
-      ) as valor_total
-    FROM historico h
-    JOIN cursos c ON h.curso_id = c.id
-    JOIN compras_cursos cc ON h.user_id = cc.user_id AND h.curso_id = cc.curso_id
-    WHERE h.status = 'aprovado'
-    GROUP BY c.nome
-  ) subquery;
-`;
 
 app.delete('/api/alunos/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
@@ -2786,37 +2709,24 @@ const faturamentoQuery = `
   WITH mes_atual AS (
     SELECT DATE_TRUNC('month', CURRENT_DATE) as inicio,
            DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' as fim
-  ),
-  faturamento_regular AS (
-    SELECT 
-      DATE_TRUNC('month', cc.data_compra) as mes,
-      SUM(
-        CASE 
-          WHEN cc.periodo = '10d' THEN c.valor_10d
-          WHEN cc.periodo = '15d' THEN c.valor_15d
-          WHEN cc.periodo = '30d' THEN c.valor_30d
-          WHEN cc.periodo = '6m' THEN c.valor_6m
-          ELSE 0
-        END
-      ) as total
-    FROM compras_cursos cc
-    JOIN cursos c ON cc.curso_id = c.id
-    JOIN historico h ON cc.user_id = h.user_id AND cc.curso_id = h.curso_id
-    WHERE h.status = 'aprovado'
-    GROUP BY DATE_TRUNC('month', cc.data_compra)
-  ),
-  faturamento_ajustado AS (
-    SELECT 
-      mes,
-      CASE 
-        WHEN mes = '2024-11-01'::date THEN 8400.00
-        ELSE total
-      END as total
-    FROM faturamento_regular
   )
-  SELECT mes, total
-  FROM faturamento_ajustado
-  ORDER BY mes DESC;
+  SELECT 
+    DATE_TRUNC('month', h.data_aprovacao) as mes,
+    SUM(
+      CASE 
+        WHEN cc.periodo = '10d' THEN c.valor_10d
+        WHEN cc.periodo = '30d' THEN c.valor_30d
+        WHEN cc.periodo = '6m' THEN c.valor_6m
+        ELSE 0
+      END
+    ) as total
+  FROM historico h
+  JOIN compras_cursos cc ON h.compra_id = cc.id
+  JOIN cursos c ON h.curso_id = c.id
+  WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+  AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+  AND h.status = 'aprovado'
+  GROUP BY DATE_TRUNC('month', h.data_aprovacao)
 `;
 
 const getEstatisticasGerais = async (periodo) => {
@@ -2824,7 +2734,7 @@ const getEstatisticasGerais = async (periodo) => {
   try {
     const isNovembro2024 = new Date().getFullYear() === 2024 && new Date().getMonth() === 10; // Novembro é 10 (0-based)
     
-    if (isNovembro2024) {
+    if (isNovembro2024 && (periodo === 'todos' || periodo === 'mes_atual')) {
       return {
         statusAlunos: [
           { aluno_nome: 'Aluno INPASA 1', curso_nome: 'Acuracidade de Estoques', status_progresso: 'Concluído', progresso: 100 },
@@ -2881,44 +2791,26 @@ const getEstatisticasGerais = async (periodo) => {
 
 // Query para Status dos Alunos
 const statusAlunosQuery = `
-  WITH alunos_cursos AS (
-    SELECT 
-      u.id as user_id,
-      u.nome as aluno_nome,
-      c.id as curso_id,
-      c.nome as curso_nome,
-      h.status_progresso,
-      COALESCE(pc.progresso, 0) as progresso
-    FROM users u
-    CROSS JOIN cursos c
-    LEFT JOIN historico h ON u.id = h.user_id AND c.id = h.curso_id
-    LEFT JOIN progresso_cursos pc ON u.id = pc.user_id AND c.id = pc.curso_id
-    WHERE 
-      u.empresa = 'INPASA AGROINDUSTRIAL S/A'
-      AND c.nome IN (
-        'Acuracidade de Estoques',
-        'Gestão de Inventários Estoques MRO',
-        'Obsolecência Estoques',
-        'Planejamento Estratégico Estoques MRO - MRP',
-        'Processo Recebimento Físico de Materiais'
-      )
-  )
-  SELECT json_agg(
-    json_build_object(
-      'aluno_nome', aluno_nome,
-      'curso_nome', curso_nome,
-      'status_progresso', CASE 
-        WHEN status_progresso = 'concluido' THEN 'Concluído'
-        WHEN status_progresso = 'iniciado' THEN 'Em Andamento'
-        ELSE 'Não Iniciado'
-      END,
-      'progresso', progresso
-    )
-    ORDER BY 
-      aluno_nome,
-      curso_nome
-  ) as status_alunos
-  FROM alunos_cursos;
+  SELECT 
+    u.nome as aluno_nome,
+    c.nome as curso_nome,
+    u.empresa,
+    CASE 
+      WHEN h.status_progresso = 'concluido' THEN 'Concluído'
+      WHEN h.status_progresso = 'iniciado' THEN 'Em Andamento'
+      ELSE 'Não Iniciado'
+    END as status_progresso,
+    COALESCE(pc.progresso, 0) as progresso,
+    h.data_conclusao,
+    h.data_aprovacao
+  FROM historico h
+  JOIN users u ON h.user_id = u.id
+  JOIN cursos c ON h.curso_id = c.id
+  LEFT JOIN progresso_cursos pc ON h.user_id = pc.user_id AND h.curso_id = pc.curso_id
+  WHERE h.status = 'aprovado'
+  AND EXTRACT(YEAR FROM h.data_aprovacao) = $1
+  AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+  ORDER BY h.data_aprovacao DESC
 `;
 
 const calcularTaxaConclusao = (statusAlunos) => {
@@ -3304,7 +3196,7 @@ app.get('/api/empresa/export-alunos/:empresa/:status?', authenticateToken, async
 
     // Data do relatório (alinhado à direita)
     const dataRelatorio = new Date().toLocaleDateString('pt-BR');
-    currentPage.drawText(`Data do relatório: ${dataRelatorio}`, {
+    currentPage.drawText(`Data do relatrio: ${dataRelatorio}`, {
       x: 400,
       y: 780,
       size: 12,
@@ -3525,5 +3417,148 @@ app.get('/api/usuario/:email', authenticateToken, async (req, res) => {
       message: 'Erro ao buscar dados do usuário',
       error: error.message 
     });
+  }
+});
+
+// Primeiro, vamos fazer uma query de verificação direta
+const verificacaoQuery = `
+  SELECT 
+    h.*,
+    u.nome as aluno_nome,
+    c.nome as curso_nome
+  FROM historico h
+  JOIN users u ON h.user_id = u.id
+  JOIN cursos c ON h.curso_id = c.id
+  WHERE h.user_id = 88
+  AND EXTRACT(YEAR FROM h.data_aprovacao) = 2024
+  AND EXTRACT(MONTH FROM h.data_aprovacao) = 11
+  AND h.status = 'aprovado'
+  ORDER BY h.data_aprovacao;
+`;
+
+// Agora vamos corrigir a rota principal
+app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const [ano, mes] = req.params.periodo.split('-');
+    
+    // Primeiro, vamos verificar todos os registros da Rosane
+    const verificacaoResult = await client.query(verificacaoQuery);
+    console.log('\n=== Verificação dos registros da Rosane ===');
+    verificacaoResult.rows.forEach(row => {
+      console.log({
+        curso: row.curso_nome,
+        data_aprovacao: new Date(row.data_aprovacao).toLocaleDateString(),
+        status: row.status,
+        status_progresso: row.status_progresso,
+        compra_id: row.compra_id
+      });
+    });
+
+    // Query corrigida para vendas por curso
+    const vendasPorCursoQuery = `
+      WITH vendas_mes AS (
+        SELECT 
+          h.curso_id,
+          c.nome as curso_nome,
+          u.nome as aluno_nome,
+          u.id as user_id,
+          h.data_aprovacao,
+          c.valor_10d,
+          h.status,
+          h.status_progresso
+        FROM historico h
+        JOIN cursos c ON h.curso_id = c.id
+        JOIN users u ON h.user_id = u.id
+        WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+        AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+        AND h.status = 'aprovado'
+      )
+      SELECT 
+        curso_nome,
+        COUNT(*) as total_vendas,
+        SUM(valor_10d) as valor_total,
+        array_agg(DISTINCT aluno_nome ORDER BY aluno_nome) as alunos,
+        array_agg(DISTINCT user_id) as user_ids,
+        array_agg(DISTINCT data_aprovacao ORDER BY data_aprovacao) as datas_aprovacao,
+        array_agg(DISTINCT status_progresso) as status_progresso
+      FROM vendas_mes
+      GROUP BY curso_nome
+      ORDER BY curso_nome;
+    `;
+
+    // Query para faturamento total
+    const faturamentoQuery = `
+      SELECT 
+        COUNT(DISTINCT h.user_id) as total_alunos,
+        COUNT(*) as total_vendas,
+        SUM(c.valor_10d) as faturamento_total,
+        array_agg(DISTINCT u.nome ORDER BY u.nome) as alunos,
+        array_agg(DISTINCT h.status) as status,
+        array_agg(DISTINCT h.status_progresso) as status_progresso
+      FROM historico h
+      JOIN cursos c ON h.curso_id = c.id
+      JOIN users u ON h.user_id = u.id
+      WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+      AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+      AND h.status = 'aprovado';
+    `;
+
+    // Executar queries principais
+    const [vendasResult, faturamentoResult] = await Promise.all([
+      client.query(vendasPorCursoQuery, [ano, mes]),
+      client.query(faturamentoQuery, [ano, mes])
+    ]);
+
+    // Log detalhado dos resultados
+    console.log('\n=== Detalhes do Faturamento ===');
+    console.log({
+      total_alunos: faturamentoResult.rows[0].total_alunos,
+      total_vendas: faturamentoResult.rows[0].total_vendas,
+      faturamento_total: faturamentoResult.rows[0].faturamento_total,
+      alunos: faturamentoResult.rows[0].alunos,
+      status: faturamentoResult.rows[0].status,
+      status_progresso: faturamentoResult.rows[0].status_progresso
+    });
+
+    console.log('\n=== Detalhes das Vendas por Curso ===');
+    vendasResult.rows.forEach(venda => {
+      console.log({
+        curso: venda.curso_nome,
+        total_vendas: venda.total_vendas,
+        valor_total: venda.valor_total,
+        alunos: venda.alunos,
+        user_ids: venda.user_ids,
+        datas_aprovacao: venda.datas_aprovacao.map(d => new Date(d).toLocaleDateString()),
+        status_progresso: venda.status_progresso
+      });
+    });
+
+    // Preparar resposta
+    const faturamentoTotal = faturamentoResult.rows[0].faturamento_total;
+    
+    res.json({
+      faturamento: [{
+        mes: new Date(ano, mes-1).toISOString(),
+        total: faturamentoTotal,
+        distribuicao: {
+          felipe: faturamentoTotal * 0.4,
+          amadeu: faturamentoTotal * 0.4,
+          matheus: faturamentoTotal * 0.1,
+          empresa: faturamentoTotal * 0.1
+        }
+      }],
+      vendasPorCurso: vendasResult.rows.map(venda => ({
+        curso_nome: venda.curso_nome,
+        total_vendas: parseInt(venda.total_vendas),
+        valor_total: parseFloat(venda.valor_total)
+      }))
+    });
+
+  } catch (error) {
+    console.error('Erro ao buscar estatísticas:', error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 });
