@@ -1510,6 +1510,21 @@ app.post('/api/cursos/acesso/:cursoId', async (req, res) => {
 
       res.json({ success: true, message: 'Acesso ao curso registrado com sucesso e progresso inicializado.' });
     } else if (cursoRows.rowCount > 0) {
+      // Garante que o progresso_cursos existe mesmo se data_inicio_acesso já estiver preenchida 
+      // (corrige cursos que ficaram presos como "Não Iniciado")
+      const progressoQuery = `
+        INSERT INTO progresso_cursos (user_id, curso_id, progresso, status)
+        VALUES ($1, $2, 0, 'iniciado')
+        ON CONFLICT (user_id, curso_id) DO NOTHING;
+      `;
+      await pool.query(progressoQuery, [userId, cursoId]);
+      
+      // Se já existia mas com status null, atualiza
+      await pool.query(
+        "UPDATE progresso_cursos SET status = 'iniciado' WHERE user_id = $1 AND curso_id = $2 AND (status IS NULL OR status = 'Não Iniciado')",
+        [userId, cursoId]
+      );
+
       res.json({ success: true, message: 'Acesso ao curso já registrado anteriormente.' });
     } else {
       res.status(404).json({ success: false, message: 'Curso não encontrado.' });
@@ -1552,7 +1567,14 @@ app.get('/api/verificar-acesso/:userId/:cursoId', async (req, res) => {
       const progressoQuery = 'SELECT status, acessos_pos_conclusao FROM progresso_cursos WHERE user_id = $1 AND curso_id = $2';
       const progressoResult = await pool.query(progressoQuery, [userId, cursoId]);
       
-      if (progressoResult.rows.length > 0 && progressoResult.rows[0].status === 'concluido' && progressoResult.rows[0].acessos_pos_conclusao >= 3) {
+      if (progressoResult.rows.length === 0) {
+        // Auto-fix: O usuário tem a compra (data de início) mas o progresso_cursos não foi criado.
+        // Cria a linha agora para destravar o status "Não Iniciado"
+        await pool.query(
+          "INSERT INTO progresso_cursos (user_id, curso_id, progresso, status) VALUES ($1, $2, 0, 'iniciado') ON CONFLICT DO NOTHING",
+          [userId, cursoId]
+        );
+      } else if (progressoResult.rows[0].status === 'concluido' && progressoResult.rows[0].acessos_pos_conclusao >= 3) {
         // Lógica para revogar o acesso
         return res.json({ temAcesso: false, motivo: 'acesso_excedido' });
       }
