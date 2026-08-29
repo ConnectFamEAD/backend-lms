@@ -83,8 +83,8 @@ async function main() {
       // 4. Grant access to all 280 courses for this student
       for (const cursoId of cursoIds) {
         await client.query(`
-          INSERT INTO compras_cursos (user_id, curso_id, status, data_inicio_acesso, data_fim_acesso)
-          VALUES ($1, $2, 'aprovado', NOW(), NOW() + INTERVAL '1 year')
+          INSERT INTO compras_cursos (user_id, curso_id, status, periodo, data_inicio_acesso, data_fim_acesso)
+          VALUES ($1, $2, 'aprovado', '6m', NOW(), NOW() + INTERVAL '6 months')
           ON CONFLICT DO NOTHING
         `, [user.id, cursoId]);
       }
