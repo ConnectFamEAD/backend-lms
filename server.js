@@ -1525,6 +1525,12 @@ app.post('/api/cursos/acesso/:cursoId', async (req, res) => {
         [userId, cursoId]
       );
 
+      // Update status_progresso in historico table
+      await pool.query(
+        'UPDATE historico SET status_progresso = $1 WHERE user_id = $2 AND curso_id = $3',
+        ['iniciado', userId, cursoId]
+      );
+
       res.json({ success: true, message: 'Acesso ao curso já registrado anteriormente.' });
     } else {
       res.status(404).json({ success: false, message: 'Curso não encontrado.' });
