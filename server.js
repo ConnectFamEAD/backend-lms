@@ -2193,6 +2193,7 @@ app.get('/api/cursos-comprados/', authenticateToken, async (req, res) => {
         cc.status as status_compra,
         cc.data_inicio_acesso,
         cc.data_fim_acesso,
+        cc.periodo,
         pc.progresso,
         pc.status as status_progresso,
         pc.time_certificado
