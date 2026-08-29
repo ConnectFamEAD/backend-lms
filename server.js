@@ -1551,7 +1551,8 @@ app.get('/api/verificar-acesso/:userId/:cursoId', async (req, res) => {
     if (acessoResult.rows.length > 0) {
       const progressoQuery = 'SELECT status, acessos_pos_conclusao FROM progresso_cursos WHERE user_id = $1 AND curso_id = $2';
       const progressoResult = await pool.query(progressoQuery, [userId, cursoId]);
-      if (progressoResult.rows[0].status === 'concluido' && progressoResult.rows[0].acessos_pos_conclusao >= 3) {
+      
+      if (progressoResult.rows.length > 0 && progressoResult.rows[0].status === 'concluido' && progressoResult.rows[0].acessos_pos_conclusao >= 3) {
         // Lógica para revogar o acesso
         return res.json({ temAcesso: false, motivo: 'acesso_excedido' });
       }
@@ -2352,7 +2353,11 @@ app.use((req, res, next) => {
 
 const port = process.env.PORT || 5000;
 
-app.listen(port, () => console.log(`Server is running on port ${port}`))
+module.exports = app;
+
+if (require.main === module) {
+  app.listen(port, () => console.log(`Server is running on port ${port}`));
+}
 
 // Rota para verificar se o certificado existe
 app.get('/api/check-certificado/:userId/:cursoId', async (req, res) => {
