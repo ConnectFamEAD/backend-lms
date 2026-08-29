@@ -32,7 +32,14 @@ process.on('uncaughtException', (err) => {
 });
 
 app.use(cors({
-  origin: ['http://localhost:3000','https://backend-lms-6n8k.onrender.com', 'https://www.fmatch.com.br', 'https://connect-ead.vercel.app'],
+  origin: [
+    'http://localhost:3000',
+    'https://backend-lms-6n8k.onrender.com',
+    'https://www.fmatch.com.br',
+    'https://connect-ead.vercel.app',
+    'https://fmatchcursos.com.br',
+    'https://www.fmatchcursos.com.br'
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
