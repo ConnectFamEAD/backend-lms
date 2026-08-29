@@ -3032,6 +3032,7 @@ app.get('/api/cursos-comprados/:userId', authenticateToken, async (req, res) => 
       SELECT 
         c.*,
         cc.status as status_compra,
+        cc.periodo,
         cc.data_inicio_acesso,
         cc.data_fim_acesso,
         pc.progresso,
