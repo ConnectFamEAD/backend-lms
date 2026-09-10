@@ -2290,6 +2290,52 @@ app.get('/api/cursos/:cursoId/aulas', async (req, res) => {
   }
 });
 
+// Atualiza informações de um curso (admin)
+app.put('/api/cursos/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const permitidos = ['nome', 'descricao', 'thumbnail', 'valor_15d', 'valor_30d', 'valor_6m', 'valor_10d', 'caminho_pdf'];
+  const campos = Object.keys(req.body).filter(k => permitidos.includes(k) && req.body[k] !== undefined);
+  if (campos.length === 0) {
+    return res.status(400).json({ success: false, message: 'Nenhum campo válido para atualizar.' });
+  }
+  try {
+    const sets = campos.map((k, i) => `${k} = $${i + 1}`).join(', ');
+    const values = campos.map(k => req.body[k]);
+    values.push(id);
+    const result = await pool.query(`UPDATE cursos SET ${sets} WHERE id = $${values.length} RETURNING *`, values);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ success: false, message: 'Curso não encontrado.' });
+    }
+    res.json({ success: true, message: 'Curso atualizado com sucesso!', curso: result.rows[0] });
+  } catch (error) {
+    console.error('Erro ao atualizar curso:', error);
+    res.status(500).json({ success: false, message: 'Erro ao atualizar curso.' });
+  }
+});
+
+// Atualiza informações de uma aula (admin) — inclui id do vídeo (Wistia)
+app.put('/api/aulas/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const permitidos = ['nome', 'descricao', 'url_video'];
+  const campos = Object.keys(req.body).filter(k => permitidos.includes(k) && req.body[k] !== undefined);
+  if (campos.length === 0) {
+    return res.status(400).json({ success: false, message: 'Nenhum campo válido para atualizar.' });
+  }
+  try {
+    const sets = campos.map((k, i) => `${k} = $${i + 1}`).join(', ');
+    const values = campos.map(k => req.body[k]);
+    values.push(id);
+    const result = await pool.query(`UPDATE aulas SET ${sets} WHERE id = $${values.length} RETURNING *`, values);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ success: false, message: 'Aula não encontrada.' });
+    }
+    res.json({ success: true, message: 'Aula atualizada com sucesso!', aula: result.rows[0] });
+  } catch (error) {
+    console.error('Erro ao atualizar aula:', error);
+    res.status(500).json({ success: false, message: 'Erro ao atualizar aula.' });
+  }
+});
+
 
 app.get('/api/cursos/:cursoId/avaliacoes', async (req, res) => {
   const { cursoId } = req.params;
