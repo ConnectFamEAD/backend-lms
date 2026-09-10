@@ -1376,10 +1376,15 @@ app.delete('/api/empresas/:id', async (req, res) => {
 
 app.put('/api/empresas/:id', async (req, res) => {
   const { id } = req.params;
-  const { 
-    cnpj, nome, logradouro, numero, complemento, bairro, 
-    cidade, estado, cep, telefone, responsavel, email, senha 
+  const {
+    cnpj, nome, logradouro, numero, complemento, bairro,
+    cidade, estado, cep, telefone, responsavel, email, senha,
+    valor_faturamento
   } = req.body;
+  // Valor de faturamento do contrato (manual): vazio/null limpa o override
+  const valorFaturamento = (valor_faturamento === '' || valor_faturamento === undefined)
+    ? null
+    : Number(valor_faturamento);
 
   try {
     const client = await pool.connect();
@@ -1390,27 +1395,27 @@ app.put('/api/empresas/:id', async (req, res) => {
       // Se uma nova senha foi fornecida, hash e atualiza
       const salt = bcrypt.genSaltSync(10);
       const hashedPassword = bcrypt.hashSync(senha, salt);
-      
+
       query = `
         UPDATE empresas
-        SET cnpj = $1, nome = $2, logradouro = $3, numero = $4, complemento = $5, 
-            bairro = $6, cidade = $7, estado = $8, cep = $9, telefone = $10, 
-            responsavel = $11, email = $12, senha = $13
-        WHERE id = $14
+        SET cnpj = $1, nome = $2, logradouro = $3, numero = $4, complemento = $5,
+            bairro = $6, cidade = $7, estado = $8, cep = $9, telefone = $10,
+            responsavel = $11, email = $12, senha = $13, valor_faturamento = $14
+        WHERE id = $15
       `;
-      values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, 
-                estado, cep, telefone, responsavel, email, hashedPassword, id];
+      values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade,
+                estado, cep, telefone, responsavel, email, hashedPassword, valorFaturamento, id];
     } else {
       // Se não houver nova senha, mantém a senha atual
       query = `
         UPDATE empresas
-        SET cnpj = $1, nome = $2, logradouro = $3, numero = $4, complemento = $5, 
-            bairro = $6, cidade = $7, estado = $8, cep = $9, telefone = $10, 
-            responsavel = $11, email = $12
-        WHERE id = $13
+        SET cnpj = $1, nome = $2, logradouro = $3, numero = $4, complemento = $5,
+            bairro = $6, cidade = $7, estado = $8, cep = $9, telefone = $10,
+            responsavel = $11, email = $12, valor_faturamento = $13
+        WHERE id = $14
       `;
-      values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade, 
-                estado, cep, telefone, responsavel, email, id];
+      values = [cnpj, nome, logradouro, numero, complemento, bairro, cidade,
+                estado, cep, telefone, responsavel, email, valorFaturamento, id];
     }
 
     await client.query(query, values);
@@ -2740,19 +2745,40 @@ app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res)
       GROUP BY DATE_TRUNC('month', h.data_aprovacao);
     `;
 
-    // Query para total recebido por empresa (valor fechado por empresa)
+    // Query para total recebido por empresa (valor fechado por empresa).
+    // Se a empresa tiver valor_faturamento manual (contrato com desconto),
+    // ele prevalece sobre a soma dos cursos. Empresas com valor manual
+    // aparecem mesmo sem vendas no mês (total_vendas = 0).
     const faturamentoPorEmpresaQuery = `
-      SELECT 
-        COALESCE(NULLIF(TRIM(u.empresa), ''), 'Avulso') as empresa,
-        COUNT(*) as total_vendas,
-        SUM(c.valor_10d) as valor_total
-      FROM historico h
-      JOIN users u ON h.user_id = u.id
-      JOIN cursos c ON h.curso_id = c.id
-      WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
-      AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
-      AND h.status = 'aprovado'
-      GROUP BY COALESCE(NULLIF(TRIM(u.empresa), ''), 'Avulso')
+      WITH vendas AS (
+        SELECT
+          COALESCE(NULLIF(TRIM(u.empresa), ''), 'Avulso') as empresa,
+          COUNT(*) as total_vendas,
+          SUM(c.valor_10d) as valor_calculado
+        FROM historico h
+        JOIN users u ON h.user_id = u.id
+        JOIN cursos c ON h.curso_id = c.id
+        WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+        AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+        AND h.status = 'aprovado'
+        GROUP BY COALESCE(NULLIF(TRIM(u.empresa), ''), 'Avulso')
+      )
+      SELECT
+        v.empresa as empresa,
+        v.total_vendas as total_vendas,
+        COALESCE(e.valor_faturamento, v.valor_calculado) as valor_total,
+        (e.valor_faturamento IS NOT NULL) as manual
+      FROM vendas v
+      LEFT JOIN empresas e ON e.nome = v.empresa
+      UNION
+      SELECT
+        e.nome as empresa,
+        0 as total_vendas,
+        e.valor_faturamento as valor_total,
+        true as manual
+      FROM empresas e
+      WHERE e.valor_faturamento IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM vendas v WHERE v.empresa = e.nome)
       ORDER BY valor_total DESC;
     `;
 
@@ -2824,7 +2850,8 @@ app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res)
       faturamentoPorEmpresa: faturamentoEmpresaResult.rows.map(item => ({
         empresa: item.empresa,
         total_vendas: parseInt(item.total_vendas),
-        valor_total: parseFloat(item.valor_total)
+        valor_total: parseFloat(item.valor_total),
+        manual: item.manual === true || item.manual === 't'
       }))
     });
 
