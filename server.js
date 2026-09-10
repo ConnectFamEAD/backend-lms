@@ -1604,7 +1604,7 @@ app.get('/api/verificar-acesso/:userId/:cursoId', async (req, res) => {
 
 app.get('/api/cursos', async (req, res) => {
   try {
-    const query = 'SELECT id, nome, descricao, thumbnail, valor_10d, valor_30d, valor_6m FROM cursos';
+    const query = 'SELECT id, nome, descricao, thumbnail, valor_15d, valor_30d, valor_6m, valor_10d, caminho_pdf FROM cursos';
     const client = await pool.connect();
     const { rows } = await client.query(query);
     client.release();
