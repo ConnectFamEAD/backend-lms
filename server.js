@@ -2568,7 +2568,10 @@ app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res)
     // Query para status dos alunos do mês
     const statusAlunosQuery = `
       SELECT 
+        CONCAT(u.nome, ' ', COALESCE(u.sobrenome, '')) as aluno_nome_completo,
         u.nome as aluno_nome,
+        u.sobrenome as aluno_sobrenome,
+        u.email as aluno_email,
         c.nome as curso_nome,
         u.empresa,
         h.status_progresso,
@@ -2580,7 +2583,7 @@ app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res)
       WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
       AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
       AND h.status = 'aprovado'
-      ORDER BY u.nome, c.nome;
+      ORDER BY u.nome, u.sobrenome, c.nome;
     `;
 
     // Query para métricas gerais do mês (incluindo taxa de conclusão)
@@ -2670,9 +2673,11 @@ app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res)
 
       // Status dos alunos
       statusAlunos: statusResult.rows.map(row => ({
-        aluno_nome: row.aluno_nome,
+        aluno_nome: row.aluno_nome_completo || row.aluno_nome,
+        aluno_sobrenome: row.aluno_sobrenome,
+        aluno_email: row.aluno_email,
         curso_nome: row.curso_nome,
-        empresa: row.empresa,
+        empresa: row.empresa || 'Avulso',
         status: row.status_progresso === 'concluido' ? 'Concluído' : 
                row.status_progresso === 'iniciado' ? 'Em Andamento' : 
                'Não Iniciado',
