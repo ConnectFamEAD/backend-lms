@@ -2799,7 +2799,11 @@ app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res)
     console.log(`Total de registros: ${statusResult.rows.length}`);
 
     // Preparar resposta
-    const faturamentoTotal = faturamentoResult.rows[0]?.faturamento_total || 0;
+    // O faturamento total soma os valores por empresa (já com override
+    // do valor de contrato manual quando definido)
+    const faturamentoTotal = faturamentoEmpresaResult.rows.reduce(
+      (soma, item) => soma + parseFloat(item.valor_total || 0), 0
+    );
     const metricas = metricasResult.rows[0];
 
     res.json({
