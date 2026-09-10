@@ -439,6 +439,29 @@ app.delete('/api/cursos-comprados/:userId', authenticateToken, async (req, res) 
   }
 });
 
+// Remove um curso específico de um aluno específico (admin)
+app.delete('/api/cursos-comprados/:userId/:cursoId', authenticateToken, async (req, res) => {
+  const { userId, cursoId } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM progresso_cursos WHERE user_id = $1 AND curso_id = $2', [userId, cursoId]);
+    await client.query('DELETE FROM historico WHERE user_id = $1 AND curso_id = $2', [userId, cursoId]);
+    const del = await client.query('DELETE FROM compras_cursos WHERE user_id = $1 AND curso_id = $2', [userId, cursoId]);
+    await client.query('COMMIT');
+    if (del.rowCount === 0) {
+      return res.status(404).json({ success: false, message: 'Vínculo aluno-curso não encontrado.' });
+    }
+    res.json({ success: true, message: 'Curso removido do aluno com sucesso!' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Erro ao remover curso do aluno:', error);
+    res.status(500).json({ success: false, message: 'Erro ao remover curso do aluno.' });
+  } finally {
+    client.release();
+  }
+});
+
 
 const { v4: uuidv4 } = require('uuid');
 
