@@ -2642,12 +2642,29 @@ app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res)
       GROUP BY DATE_TRUNC('month', h.data_aprovacao);
     `;
 
+    // Query para total recebido por empresa (valor fechado por empresa)
+    const faturamentoPorEmpresaQuery = `
+      SELECT 
+        COALESCE(NULLIF(TRIM(u.empresa), ''), 'Avulso') as empresa,
+        COUNT(*) as total_vendas,
+        SUM(c.valor_10d) as valor_total
+      FROM historico h
+      JOIN users u ON h.user_id = u.id
+      JOIN cursos c ON h.curso_id = c.id
+      WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+      AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+      AND h.status = 'aprovado'
+      GROUP BY COALESCE(NULLIF(TRIM(u.empresa), ''), 'Avulso')
+      ORDER BY valor_total DESC;
+    `;
+
     // Executar todas as queries
-    const [statusResult, metricasResult, vendasResult, faturamentoResult] = await Promise.all([
+    const [statusResult, metricasResult, vendasResult, faturamentoResult, faturamentoEmpresaResult] = await Promise.all([
       client.query(statusAlunosQuery, [ano, mes]),
       client.query(metricasQuery, [ano, mes]),
       client.query(vendasPorCursoQuery, [ano, mes]),
-      client.query(faturamentoQuery, [ano, mes])
+      client.query(faturamentoQuery, [ano, mes]),
+      client.query(faturamentoPorEmpresaQuery, [ano, mes])
     ]);
 
     // Log dos resultados
@@ -2703,6 +2720,13 @@ app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res)
         valor_total: parseFloat(venda.valor_total),
         concluidos: parseInt(venda.concluidos),
         em_andamento: parseInt(venda.em_andamento)
+      })),
+
+      // Total recebido por empresa (valor fechado por empresa)
+      faturamentoPorEmpresa: faturamentoEmpresaResult.rows.map(item => ({
+        empresa: item.empresa,
+        total_vendas: parseInt(item.total_vendas),
+        valor_total: parseFloat(item.valor_total)
       }))
     });
 
