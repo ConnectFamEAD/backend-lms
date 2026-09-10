@@ -2000,6 +2000,58 @@ app.post('/api/comprar-curso', async (req, res) => {
   }
 });
 
+// Libera treinamento cortesia para funcionário (sem pagamento): cria compra aprovada + histórico zerado
+app.post('/api/liberar-cortesia', authenticateToken, async (req, res) => {
+  const { userId, cursoId, periodo } = req.body;
+  const periodoFinal = periodo || '6m';
+  const intervalos = { '10d': '10 days', '30d': '30 days', '6m': '6 months' };
+  if (!userId || !cursoId) {
+    return res.status(400).json({ success: false, message: 'userId e cursoId são obrigatórios.' });
+  }
+  if (!intervalos[periodoFinal]) {
+    return res.status(400).json({ success: false, message: 'Período inválido. Use 10d, 30d ou 6m.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const jaTem = await client.query(
+      "SELECT id FROM compras_cursos WHERE user_id = $1 AND curso_id = $2 AND status = 'aprovado' LIMIT 1",
+      [userId, cursoId]
+    );
+    if (jaTem.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.json({ success: false, message: 'Aluno já possui este curso liberado.' });
+    }
+    const compra = await client.query(
+      `INSERT INTO compras_cursos (user_id, curso_id, status, periodo, data_inicio_acesso, data_fim_acesso)
+       VALUES ($1, $2, 'aprovado', $3, NOW(), NOW() + INTERVAL '${intervalos[periodoFinal]}')
+       RETURNING id`,
+      [userId, cursoId, periodoFinal]
+    );
+    const compraId = compra.rows[0].id;
+    await client.query(
+      `INSERT INTO historico (user_id, curso_id, compra_id, status, periodo, valor_pago, data_compra, data_aprovacao, status_progresso)
+       VALUES ($1, $2, $3, 'aprovado', $4, 0, NOW(), NOW(), 'Não Iniciado')
+       ON CONFLICT (compra_id) DO UPDATE SET status = 'aprovado', data_aprovacao = NOW()`,
+      [userId, cursoId, compraId, periodoFinal]
+    );
+    await client.query(
+      `INSERT INTO progresso_cursos (user_id, curso_id, progresso, status)
+       VALUES ($1, $2, 0, 'iniciado')
+       ON CONFLICT (user_id, curso_id) DO NOTHING`,
+      [userId, cursoId]
+    );
+    await client.query('COMMIT');
+    res.json({ success: true, message: 'Treinamento liberado com sucesso (cortesia).', compraId });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Erro ao liberar cortesia:', error);
+    res.status(500).json({ success: false, message: 'Erro ao liberar treinamento.' });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/add-aluno', async (req, res) => {
   const { username, nome, sobrenome, email, role, empresa, senha } = req.body;
 
@@ -3522,8 +3574,8 @@ const verificacaoQuery = `
   ORDER BY h.data_aprovacao;
 `;
 
-// Agora vamos corrigir a rota principal
-app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res) => {
+// Rota de debug (endpoint separado para não conflitar com a rota principal acima)
+app.get('/api/estatisticas-gerais-debug/:periodo', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     const [ano, mes] = req.params.periodo.split('-');
