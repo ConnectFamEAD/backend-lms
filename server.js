@@ -23,6 +23,26 @@ pool.on('error', (err, client) => {
   console.error('Erro inesperado no pool de conexões (idle):', err.message);
 });
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getDbClientWithRetry(maxRetries = 10, baseDelayMs = 500) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await pool.connect();
+    } catch (err) {
+      lastError = err;
+      if (attempt === maxRetries) break;
+      const delay = baseDelayMs * attempt;
+      console.warn(`Pool cheio, tentando de novo (${attempt}/${maxRetries}) em ${delay}ms...`);
+      await sleep(delay);
+    }
+  }
+  throw lastError;
+}
+
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection:', reason);
 });
@@ -1810,7 +1830,7 @@ app.post("/api/user/login", async (req, res) => {
   try {
     console.log("Iniciando processo de login...");
     const userQuery = "SELECT * FROM users WHERE email = $1 OR username = $1";
-    client = await pool.connect();
+    client = await getDbClientWithRetry();
     const userResults = await client.query(userQuery, [Email]);
     console.log("Resultados da consulta 'users':", userResults.rows);
 
