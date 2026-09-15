@@ -1806,10 +1806,11 @@ app.post("/api/user/login", async (req, res) => {
     return res.status(400).json({ success: false, message: 'Dados incompletos.' });
   }
 
+  let client;
   try {
     console.log("Iniciando processo de login...");
     const userQuery = "SELECT * FROM users WHERE email = $1 OR username = $1";
-    const client = await pool.connect();
+    client = await pool.connect();
     const userResults = await client.query(userQuery, [Email]);
     console.log("Resultados da consulta 'users':", userResults.rows);
 
@@ -1855,58 +1856,41 @@ app.post("/api/user/login", async (req, res) => {
       }
 
     } else {
-      console.log("Nenhum usuário encontrado com o email/username fornecido.");
-
-      // 2. Verificar na tabela 'empresas'
       const empresaQuery = "SELECT * FROM empresas WHERE email = $1";
       const empresaResults = await client.query(empresaQuery, [Email]);
-      console.log("Resultados da consulta 'empresas':", empresaResults.rows);
 
       if (empresaResults.rows.length > 0) {
         const empresa = empresaResults.rows[0];
-        console.log("Empresa encontrada:", empresa);
+        const senhaValida = await comparePasswords(senha, empresa.senha);
 
-        // Usando bcrypt-nodejs para comparar senhas
-        bcrypt.compare(senha, empresa.senha, (err, senhaValida) => {
-          if (err) {
-            console.error("Erro ao comparar senhas:", err);
-            return res.status(500).json({ success: false, message: 'Erro interno do servidor' });
-          }
-
-          console.log("Senha válida:", senhaValida);
-
-          if (senhaValida) {
-            // Login bem-sucedido como empresa (Empresa)
-            const token = jwt.sign({ 
-              userId: empresa.id, 
-              role: 'Empresa', 
-              username: empresa.nome,
-              empresa: empresa.nome  // Adicione isso se não estiver presente
-            }, jwtSecret, { expiresIn: '10h' });
-            console.log("Token gerado:", token);
-            return res.json({
-              success: true,
-              message: 'Login bem-sucedido!',
-              token: token,
-              username: empresa.nome,
-              userId: empresa.id,
-              role: 'Empresa',
-              empresa: empresa.nome // Incluir a empresa na resposta
-            });
-          } else {
-            console.log("Credenciais inválidas (senha incorreta).");
-            return res.status(401).json({ success: false, message: 'Credenciais inválidas!' });
-          }
-        });
+        if (senhaValida) {
+          const token = jwt.sign({
+            userId: empresa.id,
+            role: 'Empresa',
+            username: empresa.nome,
+            empresa: empresa.nome
+          }, jwtSecret, { expiresIn: '10h' });
+          return res.json({
+            success: true,
+            message: 'Login bem-sucedido!',
+            token: token,
+            username: empresa.nome,
+            userId: empresa.id,
+            role: 'Empresa',
+            empresa: empresa.nome
+          });
+        } else {
+          return res.status(401).json({ success: false, message: 'Credenciais inválidas!' });
+        }
       } else {
-        console.log("Nenhuma empresa encontrada com o email fornecido.");
-        client.release();
         return res.status(401).json({ success: false, message: 'Credenciais inválidas!' });
       }
     }
   } catch (error) {
     console.error("Erro no login:", error);
     return res.status(500).json({ error: "Internal Server Error" });
+  } finally {
+    if (client) client.release();
   }
 });
 
