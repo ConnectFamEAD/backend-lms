@@ -2690,157 +2690,288 @@ app.post('/api/generate-manual-certificate', async (req, res) => {
   }
 });
 
-app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res) => {
+app.get('/api/estatisticas-gerais/:periodo?', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    const [ano, mes] = req.params.periodo.split('-');
-    
-    // Query para status dos alunos do mês
-    const statusAlunosQuery = `
-      SELECT 
-        CONCAT(u.nome, ' ', COALESCE(u.sobrenome, '')) as aluno_nome_completo,
-        u.nome as aluno_nome,
-        u.sobrenome as aluno_sobrenome,
-        u.email as aluno_email,
-        c.nome as curso_nome,
-        u.empresa,
-        h.status_progresso,
-        h.data_conclusao,
-        h.data_aprovacao
-      FROM historico h
-      JOIN users u ON h.user_id = u.id
-      JOIN cursos c ON h.curso_id = c.id
-      WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
-      AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
-      AND h.status = 'aprovado'
-      ORDER BY u.nome, u.sobrenome, c.nome;
-    `;
+    const periodo = req.params.periodo || 'todos';
+    const isTodos = !periodo || periodo === 'todos' || periodo === 'geral';
 
-    // Query para métricas gerais do mês (incluindo taxa de conclusão)
-    const metricasQuery = `
-      WITH metricas_mes AS (
+    let statusAlunosQuery;
+    let metricasQuery;
+    let vendasPorCursoQuery;
+    let faturamentoQuery;
+    let faturamentoPorEmpresaQuery;
+    let queryParams = [];
+
+    if (isTodos) {
+      statusAlunosQuery = `
         SELECT 
-          COUNT(DISTINCT h.user_id) as total_alunos,
-          COUNT(*) as total_cursos,
-          COUNT(CASE WHEN h.status_progresso = 'concluido' THEN 1 END) as cursos_concluidos,
-          COUNT(CASE WHEN h.status_progresso = 'iniciado' THEN 1 END) as cursos_em_andamento
+          CONCAT(u.nome, ' ', COALESCE(u.sobrenome, '')) as aluno_nome_completo,
+          u.nome as aluno_nome,
+          u.sobrenome as aluno_sobrenome,
+          u.email as aluno_email,
+          c.nome as curso_nome,
+          u.empresa,
+          h.status_progresso,
+          h.data_conclusao,
+          h.data_aprovacao
         FROM historico h
-        WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
-        AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
-        AND h.status = 'aprovado'
-      )
-      SELECT 
-        total_alunos,
-        total_cursos,
-        cursos_concluidos,
-        cursos_em_andamento,
-        CASE 
-          WHEN total_cursos > 0 THEN 
-            ROUND((cursos_concluidos::numeric / total_cursos) * 100, 2)
-          ELSE 0 
-        END as taxa_conclusao
-      FROM metricas_mes;
-    `;
+        JOIN users u ON h.user_id = u.id
+        JOIN cursos c ON h.curso_id = c.id
+        WHERE h.status = 'aprovado'
+        ORDER BY u.nome, u.sobrenome, c.nome;
+      `;
 
-    // Query para vendas por curso
-    const vendasPorCursoQuery = `
-      SELECT 
-        c.nome as curso_nome,
-        COUNT(*) as total_vendas,
-        SUM(c.valor_10d) as valor_total,
-        COUNT(CASE WHEN h.status_progresso = 'concluido' THEN 1 END) as concluidos,
-        COUNT(CASE WHEN h.status_progresso = 'iniciado' THEN 1 END) as em_andamento
-      FROM historico h
-      JOIN cursos c ON h.curso_id = c.id
-      WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
-      AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
-      AND h.status = 'aprovado'
-      GROUP BY c.id, c.nome
-      ORDER BY c.nome;
-    `;
+      metricasQuery = `
+        WITH metricas_totais AS (
+          SELECT 
+            COUNT(DISTINCT h.user_id) as total_alunos,
+            COUNT(*) as total_cursos,
+            COUNT(CASE WHEN LOWER(h.status_progresso) = 'concluido' THEN 1 END) as cursos_concluidos,
+            COUNT(CASE WHEN LOWER(h.status_progresso) = 'iniciado' THEN 1 END) as cursos_em_andamento
+          FROM historico h
+          WHERE h.status = 'aprovado'
+        )
+        SELECT 
+          total_alunos,
+          total_cursos,
+          cursos_concluidos,
+          cursos_em_andamento,
+          CASE 
+            WHEN total_cursos > 0 THEN 
+              ROUND((cursos_concluidos::numeric / total_cursos) * 100, 2)
+            ELSE 0 
+          END as taxa_conclusao
+        FROM metricas_totais;
+      `;
 
-    // Query para faturamento total
-    const faturamentoQuery = `
-      SELECT 
-        DATE_TRUNC('month', h.data_aprovacao) as mes,
-        SUM(c.valor_10d) as faturamento_total
-      FROM historico h
-      JOIN cursos c ON h.curso_id = c.id
-      WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
-      AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
-      AND h.status = 'aprovado'
-      GROUP BY DATE_TRUNC('month', h.data_aprovacao);
-    `;
-
-    // Query para total recebido por empresa (valor fechado por empresa).
-    // Se a empresa tiver valor_faturamento manual (contrato com desconto),
-    // ele prevalece sobre a soma dos cursos. Empresas com valor manual
-    // aparecem mesmo sem vendas no mês (total_vendas = 0).
-    const faturamentoPorEmpresaQuery = `
-      WITH vendas AS (
-        SELECT
-          COALESCE(NULLIF(TRIM(u.empresa), ''), 'Avulso') as empresa,
+      vendasPorCursoQuery = `
+        SELECT 
+          c.nome as curso_nome,
           COUNT(*) as total_vendas,
-          SUM(c.valor_10d) as valor_calculado
+          SUM(c.valor_10d) as valor_total,
+          COUNT(CASE WHEN LOWER(h.status_progresso) = 'concluido' THEN 1 END) as concluidos,
+          COUNT(CASE WHEN LOWER(h.status_progresso) = 'iniciado' THEN 1 END) as em_andamento
+        FROM historico h
+        JOIN cursos c ON h.curso_id = c.id
+        WHERE h.status = 'aprovado'
+        GROUP BY c.id, c.nome
+        ORDER BY total_vendas DESC, c.nome;
+      `;
+
+      faturamentoQuery = `
+        SELECT 
+          NOW() as mes,
+          SUM(c.valor_10d) as faturamento_total
+        FROM historico h
+        JOIN cursos c ON h.curso_id = c.id
+        WHERE h.status = 'aprovado';
+      `;
+
+      faturamentoPorEmpresaQuery = `
+        WITH vendas AS (
+          SELECT
+            COALESCE(NULLIF(TRIM(u.empresa), ''), 'Avulso') as empresa,
+            COUNT(DISTINCT u.id) as total_alunos,
+            COUNT(*) as total_vendas,
+            COUNT(CASE WHEN LOWER(h.status_progresso) = 'concluido' THEN 1 END) as concluidos,
+            COUNT(CASE WHEN LOWER(h.status_progresso) = 'iniciado' THEN 1 END) as em_andamento,
+            COUNT(CASE WHEN h.status_progresso IS NULL OR LOWER(h.status_progresso) = 'não iniciado' OR LOWER(h.status_progresso) = 'nao iniciado' THEN 1 END) as nao_iniciados,
+            COUNT(CASE WHEN h.cod_indent IS NOT NULL AND LOWER(h.status_progresso) = 'concluido' THEN 1 END) as certificados_emitidos,
+            SUM(c.valor_10d) as valor_calculado
+          FROM historico h
+          JOIN users u ON h.user_id = u.id
+          JOIN cursos c ON h.curso_id = c.id
+          WHERE h.status = 'aprovado'
+          GROUP BY COALESCE(NULLIF(TRIM(u.empresa), ''), 'Avulso')
+        )
+        SELECT
+          v.empresa as empresa,
+          v.total_alunos as total_alunos,
+          v.total_vendas as total_vendas,
+          v.concluidos as concluidos,
+          v.em_andamento as em_andamento,
+          v.nao_iniciados as nao_iniciados,
+          v.certificados_emitidos as certificados_emitidos,
+          CASE WHEN v.total_vendas > 0 THEN ROUND((v.concluidos::numeric / v.total_vendas) * 100, 1) ELSE 0 END as taxa_conclusao,
+          COALESCE(e.valor_faturamento, v.valor_calculado) as valor_total,
+          (e.valor_faturamento IS NOT NULL) as manual
+        FROM vendas v
+        LEFT JOIN empresas e ON e.nome = v.empresa
+        UNION
+        SELECT
+          e.nome as empresa,
+          (SELECT COUNT(*) FROM users u WHERE u.empresa = e.nome AND u.role = 'Aluno') as total_alunos,
+          0 as total_vendas,
+          0 as concluidos,
+          0 as em_andamento,
+          0 as nao_iniciados,
+          0 as certificados_emitidos,
+          0 as taxa_conclusao,
+          e.valor_faturamento as valor_total,
+          true as manual
+        FROM empresas e
+        WHERE e.valor_faturamento IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM vendas v WHERE v.empresa = e.nome)
+        ORDER BY valor_total DESC;
+      `;
+    } else {
+      const [ano, mes] = periodo.split('-');
+      queryParams = [ano, mes];
+
+      statusAlunosQuery = `
+        SELECT 
+          CONCAT(u.nome, ' ', COALESCE(u.sobrenome, '')) as aluno_nome_completo,
+          u.nome as aluno_nome,
+          u.sobrenome as aluno_sobrenome,
+          u.email as aluno_email,
+          c.nome as curso_nome,
+          u.empresa,
+          h.status_progresso,
+          h.data_conclusao,
+          h.data_aprovacao
         FROM historico h
         JOIN users u ON h.user_id = u.id
         JOIN cursos c ON h.curso_id = c.id
         WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
         AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
         AND h.status = 'aprovado'
-        GROUP BY COALESCE(NULLIF(TRIM(u.empresa), ''), 'Avulso')
-      )
-      SELECT
-        v.empresa as empresa,
-        v.total_vendas as total_vendas,
-        COALESCE(e.valor_faturamento, v.valor_calculado) as valor_total,
-        (e.valor_faturamento IS NOT NULL) as manual
-      FROM vendas v
-      LEFT JOIN empresas e ON e.nome = v.empresa
-      UNION
-      SELECT
-        e.nome as empresa,
-        0 as total_vendas,
-        e.valor_faturamento as valor_total,
-        true as manual
-      FROM empresas e
-      WHERE e.valor_faturamento IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM vendas v WHERE v.empresa = e.nome)
-      ORDER BY valor_total DESC;
-    `;
+        ORDER BY u.nome, u.sobrenome, c.nome;
+      `;
+
+      metricasQuery = `
+        WITH metricas_mes AS (
+          SELECT 
+            COUNT(DISTINCT h.user_id) as total_alunos,
+            COUNT(*) as total_cursos,
+            COUNT(CASE WHEN LOWER(h.status_progresso) = 'concluido' THEN 1 END) as cursos_concluidos,
+            COUNT(CASE WHEN LOWER(h.status_progresso) = 'iniciado' THEN 1 END) as cursos_em_andamento
+          FROM historico h
+          WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+          AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+          AND h.status = 'aprovado'
+        )
+        SELECT 
+          total_alunos,
+          total_cursos,
+          cursos_concluidos,
+          cursos_em_andamento,
+          CASE 
+            WHEN total_cursos > 0 THEN 
+              ROUND((cursos_concluidos::numeric / total_cursos) * 100, 2)
+            ELSE 0 
+          END as taxa_conclusao
+        FROM metricas_mes;
+      `;
+
+      vendasPorCursoQuery = `
+        SELECT 
+          c.nome as curso_nome,
+          COUNT(*) as total_vendas,
+          SUM(c.valor_10d) as valor_total,
+          COUNT(CASE WHEN LOWER(h.status_progresso) = 'concluido' THEN 1 END) as concluidos,
+          COUNT(CASE WHEN LOWER(h.status_progresso) = 'iniciado' THEN 1 END) as em_andamento
+        FROM historico h
+        JOIN cursos c ON h.curso_id = c.id
+        WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+        AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+        AND h.status = 'aprovado'
+        GROUP BY c.id, c.nome
+        ORDER BY total_vendas DESC, c.nome;
+      `;
+
+      faturamentoQuery = `
+        SELECT 
+          DATE_TRUNC('month', h.data_aprovacao) as mes,
+          SUM(c.valor_10d) as faturamento_total
+        FROM historico h
+        JOIN cursos c ON h.curso_id = c.id
+        WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+        AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+        AND h.status = 'aprovado'
+        GROUP BY DATE_TRUNC('month', h.data_aprovacao);
+      `;
+
+      faturamentoPorEmpresaQuery = `
+        WITH vendas AS (
+          SELECT
+            COALESCE(NULLIF(TRIM(u.empresa), ''), 'Avulso') as empresa,
+            COUNT(DISTINCT u.id) as total_alunos,
+            COUNT(*) as total_vendas,
+            COUNT(CASE WHEN LOWER(h.status_progresso) = 'concluido' THEN 1 END) as concluidos,
+            COUNT(CASE WHEN LOWER(h.status_progresso) = 'iniciado' THEN 1 END) as em_andamento,
+            COUNT(CASE WHEN h.status_progresso IS NULL OR LOWER(h.status_progresso) = 'não iniciado' OR LOWER(h.status_progresso) = 'nao iniciado' THEN 1 END) as nao_iniciados,
+            COUNT(CASE WHEN h.cod_indent IS NOT NULL AND LOWER(h.status_progresso) = 'concluido' THEN 1 END) as certificados_emitidos,
+            SUM(c.valor_10d) as valor_calculado
+          FROM historico h
+          JOIN users u ON h.user_id = u.id
+          JOIN cursos c ON h.curso_id = c.id
+          WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
+          AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
+          AND h.status = 'aprovado'
+          GROUP BY COALESCE(NULLIF(TRIM(u.empresa), ''), 'Avulso')
+        )
+        SELECT
+          v.empresa as empresa,
+          v.total_alunos as total_alunos,
+          v.total_vendas as total_vendas,
+          v.concluidos as concluidos,
+          v.em_andamento as em_andamento,
+          v.nao_iniciados as nao_iniciados,
+          v.certificados_emitidos as certificados_emitidos,
+          CASE WHEN v.total_vendas > 0 THEN ROUND((v.concluidos::numeric / v.total_vendas) * 100, 1) ELSE 0 END as taxa_conclusao,
+          COALESCE(e.valor_faturamento, v.valor_calculado) as valor_total,
+          (e.valor_faturamento IS NOT NULL) as manual
+        FROM vendas v
+        LEFT JOIN empresas e ON e.nome = v.empresa
+        UNION
+        SELECT
+          e.nome as empresa,
+          (SELECT COUNT(*) FROM users u WHERE u.empresa = e.nome AND u.role = 'Aluno') as total_alunos,
+          0 as total_vendas,
+          0 as concluidos,
+          0 as em_andamento,
+          0 as nao_iniciados,
+          0 as certificados_emitidos,
+          0 as taxa_conclusao,
+          e.valor_faturamento as valor_total,
+          true as manual
+        FROM empresas e
+        WHERE e.valor_faturamento IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM vendas v WHERE v.empresa = e.nome)
+        ORDER BY valor_total DESC;
+      `;
+    }
 
     // Executar todas as queries
     const [statusResult, metricasResult, vendasResult, faturamentoResult, faturamentoEmpresaResult] = await Promise.all([
-      client.query(statusAlunosQuery, [ano, mes]),
-      client.query(metricasQuery, [ano, mes]),
-      client.query(vendasPorCursoQuery, [ano, mes]),
-      client.query(faturamentoQuery, [ano, mes]),
-      client.query(faturamentoPorEmpresaQuery, [ano, mes])
+      client.query(statusAlunosQuery, queryParams),
+      client.query(metricasQuery, queryParams),
+      client.query(vendasPorCursoQuery, queryParams),
+      client.query(faturamentoQuery, queryParams),
+      client.query(faturamentoPorEmpresaQuery, queryParams)
     ]);
 
-    // Log dos resultados
-    console.log('\n=== Métricas do Mês ===');
-    console.log(metricasResult.rows[0]);
-
-    console.log('\n=== Status dos Alunos ===');
-    console.log(`Total de registros: ${statusResult.rows.length}`);
-
-    // Preparar resposta
-    // O faturamento total soma os valores por empresa (já com override
-    // do valor de contrato manual quando definido)
     const faturamentoTotal = faturamentoEmpresaResult.rows.reduce(
       (soma, item) => soma + parseFloat(item.valor_total || 0), 0
     );
-    const metricas = metricasResult.rows[0];
+    const metricas = metricasResult.rows[0] || {
+      total_alunos: 0,
+      total_cursos: 0,
+      cursos_concluidos: 0,
+      cursos_em_andamento: 0,
+      taxa_conclusao: 0
+    };
 
     res.json({
+      periodo: periodo,
       // Métricas gerais
       metricas: {
-        totalAlunos: parseInt(metricas.total_alunos),
-        totalCursos: parseInt(metricas.total_cursos),
-        cursosConcluidos: parseInt(metricas.cursos_concluidos),
-        cursosEmAndamento: parseInt(metricas.cursos_em_andamento),
-        taxaConclusao: parseFloat(metricas.taxa_conclusao)
+        totalAlunos: parseInt(metricas.total_alunos || 0),
+        totalCursos: parseInt(metricas.total_cursos || 0),
+        cursosConcluidos: parseInt(metricas.cursos_concluidos || 0),
+        cursosEmAndamento: parseInt(metricas.cursos_em_andamento || 0),
+        taxaConclusao: parseFloat(metricas.taxa_conclusao || 0)
       },
 
       // Status dos alunos
@@ -2850,15 +2981,15 @@ app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res)
         aluno_email: row.aluno_email,
         curso_nome: row.curso_nome,
         empresa: row.empresa || 'Avulso',
-        status: row.status_progresso === 'concluido' ? 'Concluído' : 
-               row.status_progresso === 'iniciado' ? 'Em Andamento' : 
+        status: (row.status_progresso || '').toLowerCase() === 'concluido' ? 'Concluído' : 
+               (row.status_progresso || '').toLowerCase() === 'iniciado' ? 'Em Andamento' : 
                'Não Iniciado',
         data_conclusao: row.data_conclusao
       })),
 
       // Faturamento
       faturamento: [{
-        mes: faturamentoResult.rows[0]?.mes,
+        mes: faturamentoResult.rows[0]?.mes || new Date().toISOString(),
         total: faturamentoTotal,
         distribuicao: {
           felipe: faturamentoTotal * 0.4,
@@ -2871,17 +3002,23 @@ app.get('/api/estatisticas-gerais/:periodo', authenticateToken, async (req, res)
       // Vendas por curso
       vendasPorCurso: vendasResult.rows.map(venda => ({
         curso_nome: venda.curso_nome,
-        total_vendas: parseInt(venda.total_vendas),
-        valor_total: parseFloat(venda.valor_total),
-        concluidos: parseInt(venda.concluidos),
-        em_andamento: parseInt(venda.em_andamento)
+        total_vendas: parseInt(venda.total_vendas || 0),
+        valor_total: parseFloat(venda.valor_total || 0),
+        concluidos: parseInt(venda.concluidos || 0),
+        em_andamento: parseInt(venda.em_andamento || 0)
       })),
 
       // Total recebido por empresa (valor fechado por empresa)
       faturamentoPorEmpresa: faturamentoEmpresaResult.rows.map(item => ({
         empresa: item.empresa,
-        total_vendas: parseInt(item.total_vendas),
-        valor_total: parseFloat(item.valor_total),
+        total_alunos: parseInt(item.total_alunos || 0),
+        total_vendas: parseInt(item.total_vendas || 0),
+        concluidos: parseInt(item.concluidos || 0),
+        em_andamento: parseInt(item.em_andamento || 0),
+        nao_iniciados: parseInt(item.nao_iniciados || 0),
+        certificados_emitidos: parseInt(item.certificados_emitidos || 0),
+        taxa_conclusao: parseFloat(item.taxa_conclusao || 0),
+        valor_total: parseFloat(item.valor_total || 0),
         manual: item.manual === true || item.manual === 't'
       }))
     });
@@ -3662,144 +3799,117 @@ app.get('/api/usuario/:email', authenticateToken, async (req, res) => {
   }
 });
 
-// Primeiro, vamos fazer uma query de verificação direta
-const verificacaoQuery = `
-  SELECT 
-    h.*,
-    u.nome as aluno_nome,
-    c.nome as curso_nome
-  FROM historico h
-  JOIN users u ON h.user_id = u.id
-  JOIN cursos c ON h.curso_id = c.id
-  WHERE h.user_id = 88
-  AND EXTRACT(YEAR FROM h.data_aprovacao) = 2024
-  AND EXTRACT(MONTH FROM h.data_aprovacao) = 11
-  AND h.status = 'aprovado'
-  ORDER BY h.data_aprovacao;
-`;
-
-// Rota de debug (endpoint separado para não conflitar com a rota principal acima)
-app.get('/api/estatisticas-gerais-debug/:periodo', authenticateToken, async (req, res) => {
+// ==========================================
+// ROTA ADMINISTRATIVA: DETALHES POR EMPRESA
+// ==========================================
+app.get('/api/admin/empresa/:empresaNome/alunos', authenticateToken, async (req, res) => {
+  const { empresaNome } = req.params;
   const client = await pool.connect();
   try {
-    const [ano, mes] = req.params.periodo.split('-');
+    const decodedEmpresa = decodeURIComponent(empresaNome);
     
-    // Primeiro, vamos verificar todos os registros da Rosane
-    const verificacaoResult = await client.query(verificacaoQuery);
-    console.log('\n=== Verificação dos registros da Rosane ===');
-    verificacaoResult.rows.forEach(row => {
-      console.log({
-        curso: row.curso_nome,
-        data_aprovacao: new Date(row.data_aprovacao).toLocaleDateString(),
-        status: row.status,
-        status_progresso: row.status_progresso,
-        compra_id: row.compra_id
-      });
-    });
+    let whereClause = `WHERE u.role = 'Aluno' AND h.status = 'aprovado'`;
+    let params = [];
 
-    // Query corrigida para vendas por curso
-    const vendasPorCursoQuery = `
-      WITH vendas_mes AS (
-        SELECT 
-          h.curso_id,
-          c.nome as curso_nome,
-          u.nome as aluno_nome,
-          u.id as user_id,
-          h.data_aprovacao,
-          c.valor_10d,
-          h.status,
-          h.status_progresso
-        FROM historico h
-        JOIN cursos c ON h.curso_id = c.id
-        JOIN users u ON h.user_id = u.id
-        WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
-        AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
-        AND h.status = 'aprovado'
-      )
+    if (decodedEmpresa === 'Sem Empresa' || decodedEmpresa === 'Avulso') {
+      whereClause += ` AND (u.empresa IS NULL OR TRIM(u.empresa) = '' OR u.empresa = 'Avulso')`;
+    } else {
+      whereClause += ` AND u.empresa = $1`;
+      params.push(decodedEmpresa);
+    }
+
+    const query = `
       SELECT 
-        curso_nome,
-        COUNT(*) as total_vendas,
-        SUM(valor_10d) as valor_total,
-        array_agg(DISTINCT aluno_nome ORDER BY aluno_nome) as alunos,
-        array_agg(DISTINCT user_id) as user_ids,
-        array_agg(DISTINCT data_aprovacao ORDER BY data_aprovacao) as datas_aprovacao,
-        array_agg(DISTINCT status_progresso) as status_progresso
-      FROM vendas_mes
-      GROUP BY curso_nome
-      ORDER BY curso_nome;
+        u.id as user_id,
+        CONCAT(u.nome, ' ', COALESCE(u.sobrenome, '')) as aluno_nome_completo,
+        u.nome as aluno_nome,
+        u.sobrenome as aluno_sobrenome,
+        u.email as aluno_email,
+        u.empresa,
+        c.id as curso_id,
+        c.nome as curso_nome,
+        c.valor_10d as valor_curso,
+        h.id as historico_id,
+        h.status_progresso,
+        COALESCE(pc.progresso, CASE WHEN LOWER(h.status_progresso) = 'concluido' THEN 100 ELSE 0 END) as progresso,
+        h.data_conclusao,
+        h.data_compra,
+        h.data_aprovacao,
+        h.periodo,
+        h.cod_indent,
+        cc.data_inicio_acesso,
+        cc.data_fim_acesso
+      FROM users u
+      INNER JOIN historico h ON u.id = h.user_id
+      INNER JOIN cursos c ON h.curso_id = c.id
+      LEFT JOIN progresso_cursos pc ON h.user_id = pc.user_id AND h.curso_id = pc.curso_id
+      LEFT JOIN compras_cursos cc ON h.compra_id = cc.id
+      ${whereClause}
+      ORDER BY u.nome ASC, c.nome ASC;
     `;
 
-    // Query para faturamento total
-    const faturamentoQuery = `
-      SELECT 
-        COUNT(DISTINCT h.user_id) as total_alunos,
-        COUNT(*) as total_vendas,
-        SUM(c.valor_10d) as faturamento_total,
-        array_agg(DISTINCT u.nome ORDER BY u.nome) as alunos,
-        array_agg(DISTINCT h.status) as status,
-        array_agg(DISTINCT h.status_progresso) as status_progresso
-      FROM historico h
-      JOIN cursos c ON h.curso_id = c.id
-      JOIN users u ON h.user_id = u.id
-      WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
-      AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
-      AND h.status = 'aprovado';
-    `;
+    const result = await client.query(query, params);
+    const hoje = new Date();
 
-    // Executar queries principais
-    const [vendasResult, faturamentoResult] = await Promise.all([
-      client.query(vendasPorCursoQuery, [ano, mes]),
-      client.query(faturamentoQuery, [ano, mes])
-    ]);
+    const dadosDetalhados = result.rows.map(item => {
+      const isConcluido = (item.status_progresso || '').toLowerCase() === 'concluido';
+      const isAndamento = (item.status_progresso || '').toLowerCase() === 'iniciado';
+      const statusFormatado = isConcluido ? 'Concluído' : isAndamento ? 'Em Andamento' : 'Não Iniciado';
 
-    // Log detalhado dos resultados
-    console.log('\n=== Detalhes do Faturamento ===');
-    console.log({
-      total_alunos: faturamentoResult.rows[0].total_alunos,
-      total_vendas: faturamentoResult.rows[0].total_vendas,
-      faturamento_total: faturamentoResult.rows[0].faturamento_total,
-      alunos: faturamentoResult.rows[0].alunos,
-      status: faturamentoResult.rows[0].status,
-      status_progresso: faturamentoResult.rows[0].status_progresso
-    });
+      let dataLimiteReciclagem = null;
+      let diasRestantesReciclagem = null;
+      let statusReciclagem = 'Pendente';
 
-    console.log('\n=== Detalhes das Vendas por Curso ===');
-    vendasResult.rows.forEach(venda => {
-      console.log({
-        curso: venda.curso_nome,
-        total_vendas: venda.total_vendas,
-        valor_total: venda.valor_total,
-        alunos: venda.alunos,
-        user_ids: venda.user_ids,
-        datas_aprovacao: venda.datas_aprovacao.map(d => new Date(d).toLocaleDateString()),
-        status_progresso: venda.status_progresso
-      });
-    });
+      if (isConcluido && item.data_conclusao) {
+        const dtConclusao = new Date(item.data_conclusao);
+        dataLimiteReciclagem = new Date(dtConclusao.getTime() + (365 * 24 * 60 * 60 * 1000));
+        const diffMs = dataLimiteReciclagem - hoje;
+        diasRestantesReciclagem = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 
-    // Preparar resposta
-    const faturamentoTotal = faturamentoResult.rows[0].faturamento_total;
-    
-    res.json({
-      faturamento: [{
-        mes: new Date(ano, mes-1).toISOString(),
-        total: faturamentoTotal,
-        distribuicao: {
-          felipe: faturamentoTotal * 0.4,
-          amadeu: faturamentoTotal * 0.4,
-          matheus: faturamentoTotal * 0.1,
-          empresa: faturamentoTotal * 0.1
+        if (diasRestantesReciclagem > 60) {
+          statusReciclagem = 'Válido';
+        } else if (diasRestantesReciclagem >= 0) {
+          statusReciclagem = 'Atenção: Próximo de Vencer';
+        } else {
+          statusReciclagem = 'Vencido: Necessita Reciclagem';
         }
-      }],
-      vendasPorCurso: vendasResult.rows.map(venda => ({
-        curso_nome: venda.curso_nome,
-        total_vendas: parseInt(venda.total_vendas),
-        valor_total: parseFloat(venda.valor_total)
-      }))
+      } else if (item.data_fim_acesso) {
+        const dtFim = new Date(item.data_fim_acesso);
+        const diffMs = dtFim - hoje;
+        diasRestantesReciclagem = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        statusReciclagem = diasRestantesReciclagem >= 0 ? `${diasRestantesReciclagem} dias de acesso` : 'Acesso expirado';
+      }
+
+      return {
+        userId: item.user_id,
+        alunoNome: (item.aluno_nome_completo || item.aluno_nome || '').trim(),
+        alunoEmail: item.aluno_email,
+        empresa: item.empresa || 'Avulso',
+        cursoId: item.curso_id,
+        cursoNome: item.curso_nome,
+        valorCurso: parseFloat(item.valor_curso || 0),
+        status: statusFormatado,
+        progresso: Math.round(parseFloat(item.progresso || 0)),
+        dataCompra: item.data_compra || item.data_aprovacao,
+        dataConclusao: item.data_conclusao,
+        codCertificado: item.cod_indent,
+        temCertificado: !!(item.cod_indent && isConcluido),
+        dataLimiteReciclagem: dataLimiteReciclagem ? dataLimiteReciclagem.toISOString().split('T')[0] : null,
+        diasRestantesReciclagem: diasRestantesReciclagem,
+        statusReciclagem: statusReciclagem
+      };
+    });
+
+    res.json({
+      success: true,
+      empresa: decodedEmpresa,
+      totalRegistros: dadosDetalhados.length,
+      data: dadosDetalhados
     });
 
   } catch (error) {
-    console.error('Erro ao buscar estatísticas:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Erro ao buscar alunos da empresa para o admin:', error);
+    res.status(500).json({ success: false, message: 'Erro ao buscar alunos da empresa', error: error.message });
   } finally {
     client.release();
   }
