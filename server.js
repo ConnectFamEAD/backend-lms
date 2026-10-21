@@ -216,22 +216,9 @@ app.post('/api/empresas', async (req, res) => {
       await pool.query('INSERT INTO cnpj_tentativas (cnpj, tentativas, ultima_tentativa) VALUES ($1, 1, NOW())', [cnpj]);
     }
 
-    // 3. Envie o email para suporte.fmatch@outlook.com
-    const transporter = nodemailer.createTransport({
-      host: 'smtp.office365.com',
-      port: 587,
-      secure: false,
-      auth: {
-        user: 'suporte.fmatch@outlook.com',
-        pass: '@Desenho1977##',
-      },
-    });
-
-    const mailOptions = {
-      from: 'suporte.fmatch@outlook.com',
-      to: 'suporte.fmatch@outlook.com',
-      subject: 'Nova Empresa Cadastrada',
-      text: `
+    // 3. Envie o email via Resend com fallback
+    const resendApiKey = process.env.RESEND_API_KEY;
+    const emailTexto = `
         Uma nova empresa solicitou um cadastro de acesso de empresas na plataforma:
 
         Nome da Empresa: ${dadosEmpresa.nomeEmpresa}
@@ -243,10 +230,40 @@ app.post('/api/empresas', async (req, res) => {
         CEP: ${dadosEmpresa.cep}
         Telefone: ${dadosEmpresa.telefone}
         Email: ${dadosEmpresa.email}
-      `,
-    };
+    `;
 
-    await transporter.sendMail(mailOptions);
+    try {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: 'FMATCH Cursos <suporte@fmatchcursos.com.br>',
+          to: ['suporte.fmatch@outlook.com'],
+          subject: 'Nova Empresa Cadastrada',
+          text: emailTexto
+        })
+      });
+    } catch (sendErr) {
+      console.warn('Erro ao enviar via Resend, tentando transporter:', sendErr);
+      const transporter = nodemailer.createTransport({
+        host: 'smtp-mail.outlook.com',
+        port: 587,
+        secure: false,
+        auth: {
+          user: 'suporte.fmatch@outlook.com',
+          pass: '@Desenho1977##',
+        },
+      });
+      await transporter.sendMail({
+        from: 'suporte.fmatch@outlook.com',
+        to: 'suporte.fmatch@outlook.com',
+        subject: 'Nova Empresa Cadastrada',
+        text: emailTexto
+      });
+    }
 
     res.status(201).json({ success: true, message: 'Solicitação de cadastro enviada com sucesso!' });
   } catch (error) {
@@ -332,18 +349,35 @@ const transporter = nodemailer.createTransport({
 });
 
 const sendVerificationCode = async (email, code) => {
-    const mailOptions = {
-        from: 'suporte.fmatch@outlook.com', // endereço do remetente
-        to: email, // endereço do destinatário
-        subject: 'Código de Verificação',
-        text: `Seu código de verificação é: ${code}`,
-    };
-
+    const resendApiKey = process.env.RESEND_API_KEY;
     try {
-        await transporter.sendMail(mailOptions);
-        console.log('Código de verificação enviado para:', email);
+        await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${resendApiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                from: 'FMATCH Cursos <suporte@fmatchcursos.com.br>',
+                to: [email],
+                subject: 'Código de Verificação',
+                text: `Seu código de verificação é: ${code}`
+            })
+        });
+        console.log('Código de verificação enviado via Resend para:', email);
     } catch (error) {
-        console.error('Erro ao enviar código de verificação:', error);
+        console.warn('Erro ao enviar código via Resend, tentando transporter:', error);
+        try {
+            const mailOptions = {
+                from: 'suporte.fmatch@outlook.com',
+                to: email,
+                subject: 'Código de Verificação',
+                text: `Seu código de verificação é: ${code}`,
+            };
+            await transporter.sendMail(mailOptions);
+        } catch (mailErr) {
+            console.error('Erro ao enviar código de verificação:', mailErr);
+        }
     }
 };
 
@@ -954,7 +988,7 @@ app.post("/api/checkout", async (req, res) => {
     const comprasRegistradas = await Promise.all(items.map(async item => {
       const { rows } = await pool.query(
         "INSERT INTO compras_cursos (user_id, curso_id, status, periodo, created_at) VALUES ($1, $2, 'pendente', $3, NOW()) RETURNING id",
-        [userId, item.id, item.periodo]
+        [userId, item.id, item.periodo || '6m']
       );
       return rows[0].id;
     }));
@@ -1041,18 +1075,35 @@ const enviarEmailConfirmacaoCompra = async (email, itensCompra, total, dataCompr
     <p>Data da Compra: ${dataCompra}</p>
   `;
 
-  const mailOptions = {
-    from: 'suporte.fmatch@outlook.com',
-    to: email,
-    subject: 'Detalhes da sua compra',
-    html: htmlContent,
-  };
-
+  const resendApiKey = process.env.RESEND_API_KEY;
   try {
-    await transporter.sendMail(mailOptions);
-    console.log('Email de confirmação de compra enviado para:', email);
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${resendApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: 'FMATCH Cursos <suporte@fmatchcursos.com.br>',
+        to: [email],
+        subject: 'Detalhes da sua compra',
+        html: htmlContent
+      })
+    });
+    console.log('Email de confirmação de compra enviado via Resend para:', email);
   } catch (error) {
-    console.error('Erro ao enviar email de confirmação:', error);
+    console.warn('Erro ao enviar via Resend, tentando transporter:', error);
+    try {
+      const mailOptions = {
+        from: 'suporte.fmatch@outlook.com',
+        to: email,
+        subject: 'Detalhes da sua compra',
+        html: htmlContent,
+      };
+      await transporter.sendMail(mailOptions);
+    } catch (mailErr) {
+      console.error('Erro ao enviar email de confirmação:', mailErr);
+    }
   }
 };
 
@@ -2762,10 +2813,9 @@ app.get('/api/estatisticas-gerais/:periodo?', authenticateToken, async (req, res
       faturamentoQuery = `
         SELECT 
           NOW() as mes,
-          SUM(c.valor_10d) as faturamento_total
-        FROM historico h
-        JOIN cursos c ON h.curso_id = c.id
-        WHERE h.status = 'aprovado';
+          COALESCE(SUM(valor_faturamento), 0) as faturamento_total
+        FROM empresas
+        WHERE nome IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A');
       `;
 
       faturamentoPorEmpresaQuery = `
@@ -2794,8 +2844,11 @@ app.get('/api/estatisticas-gerais/:periodo?', authenticateToken, async (req, res
           v.nao_iniciados as nao_iniciados,
           v.certificados_emitidos as certificados_emitidos,
           CASE WHEN v.total_vendas > 0 THEN ROUND((v.concluidos::numeric / v.total_vendas) * 100, 1) ELSE 0 END as taxa_conclusao,
-          COALESCE(e.valor_faturamento, v.valor_calculado) as valor_total,
-          (e.valor_faturamento IS NOT NULL) as manual
+          CASE 
+            WHEN v.empresa IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A') THEN COALESCE(e.valor_faturamento, 0)
+            ELSE 0
+          END as valor_total,
+          (v.empresa IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A')) as manual
         FROM vendas v
         LEFT JOIN empresas e ON e.nome = v.empresa
         UNION
@@ -2808,7 +2861,10 @@ app.get('/api/estatisticas-gerais/:periodo?', authenticateToken, async (req, res
           0 as nao_iniciados,
           0 as certificados_emitidos,
           0 as taxa_conclusao,
-          e.valor_faturamento as valor_total,
+          CASE 
+            WHEN e.nome IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A') THEN COALESCE(e.valor_faturamento, 0)
+            ELSE 0
+          END as valor_total,
           true as manual
         FROM empresas e
         WHERE e.valor_faturamento IS NOT NULL
@@ -2883,9 +2939,10 @@ app.get('/api/estatisticas-gerais/:periodo?', authenticateToken, async (req, res
       faturamentoQuery = `
         SELECT 
           DATE_TRUNC('month', h.data_aprovacao) as mes,
-          SUM(c.valor_10d) as faturamento_total
+          COALESCE(SUM(CASE WHEN u.empresa IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A') THEN e.valor_faturamento ELSE 0 END), 0) as faturamento_total
         FROM historico h
-        JOIN cursos c ON h.curso_id = c.id
+        JOIN users u ON h.user_id = u.id
+        LEFT JOIN empresas e ON e.nome = u.empresa
         WHERE EXTRACT(YEAR FROM h.data_aprovacao) = $1
         AND EXTRACT(MONTH FROM h.data_aprovacao) = $2
         AND h.status = 'aprovado'
@@ -2920,8 +2977,11 @@ app.get('/api/estatisticas-gerais/:periodo?', authenticateToken, async (req, res
           v.nao_iniciados as nao_iniciados,
           v.certificados_emitidos as certificados_emitidos,
           CASE WHEN v.total_vendas > 0 THEN ROUND((v.concluidos::numeric / v.total_vendas) * 100, 1) ELSE 0 END as taxa_conclusao,
-          COALESCE(e.valor_faturamento, v.valor_calculado) as valor_total,
-          (e.valor_faturamento IS NOT NULL) as manual
+          CASE 
+            WHEN v.empresa IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A') THEN COALESCE(e.valor_faturamento, 0)
+            ELSE 0
+          END as valor_total,
+          (v.empresa IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A')) as manual
         FROM vendas v
         LEFT JOIN empresas e ON e.nome = v.empresa
         UNION
@@ -2934,7 +2994,10 @@ app.get('/api/estatisticas-gerais/:periodo?', authenticateToken, async (req, res
           0 as nao_iniciados,
           0 as certificados_emitidos,
           0 as taxa_conclusao,
-          e.valor_faturamento as valor_total,
+          CASE 
+            WHEN e.nome IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A') THEN COALESCE(e.valor_faturamento, 0)
+            ELSE 0
+          END as valor_total,
           true as manual
         FROM empresas e
         WHERE e.valor_faturamento IS NOT NULL
@@ -3831,7 +3894,10 @@ app.get('/api/admin/empresa/:empresaNome/alunos', authenticateToken, async (req,
         c.valor_10d as valor_curso,
         h.id as historico_id,
         h.status_progresso,
-        COALESCE(pc.progresso, CASE WHEN LOWER(h.status_progresso) = 'concluido' THEN 100 ELSE 0 END) as progresso,
+        CASE 
+          WHEN LOWER(h.status_progresso) = 'concluido' OR h.cod_indent IS NOT NULL THEN 100 
+          ELSE COALESCE(pc.progresso, 0) 
+        END as progresso,
         h.data_conclusao,
         h.data_compra,
         h.data_aprovacao,
@@ -3889,7 +3955,7 @@ app.get('/api/admin/empresa/:empresaNome/alunos', authenticateToken, async (req,
         cursoNome: item.curso_nome,
         valorCurso: parseFloat(item.valor_curso || 0),
         status: statusFormatado,
-        progresso: Math.round(parseFloat(item.progresso || 0)),
+        progresso: (isConcluido || !!item.cod_indent) ? 100 : Math.round(parseFloat(item.progresso || 0)),
         dataCompra: item.data_compra || item.data_aprovacao,
         dataConclusao: item.data_conclusao,
         codCertificado: item.cod_indent,
