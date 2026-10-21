@@ -2845,7 +2845,7 @@ app.get('/api/estatisticas-gerais/:periodo?', authenticateToken, async (req, res
           v.certificados_emitidos as certificados_emitidos,
           CASE WHEN v.total_vendas > 0 THEN ROUND((v.concluidos::numeric / v.total_vendas) * 100, 1) ELSE 0 END as taxa_conclusao,
           CASE 
-            WHEN v.empresa IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A') THEN COALESCE(e.valor_faturamento, 0)
+            WHEN v.empresa IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A') THEN COALESCE(NULLIF(e.valor_faturamento, 0), v.valor_calculado, 0)
             ELSE 0
           END as valor_total,
           (v.empresa IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A')) as manual
@@ -2978,7 +2978,7 @@ app.get('/api/estatisticas-gerais/:periodo?', authenticateToken, async (req, res
           v.certificados_emitidos as certificados_emitidos,
           CASE WHEN v.total_vendas > 0 THEN ROUND((v.concluidos::numeric / v.total_vendas) * 100, 1) ELSE 0 END as taxa_conclusao,
           CASE 
-            WHEN v.empresa IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A') THEN COALESCE(e.valor_faturamento, 0)
+            WHEN v.empresa IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A') THEN COALESCE(NULLIF(e.valor_faturamento, 0), v.valor_calculado, 0)
             ELSE 0
           END as valor_total,
           (v.empresa IN ('GRUPO ZAMBIANCO', 'INPASA AGROINDUSTRIAL S/A')) as manual
