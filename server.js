@@ -2526,6 +2526,45 @@ app.put('/api/cursos/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Criar novo curso (admin)
+app.post('/api/cursos', authenticateToken, async (req, res) => {
+  const { nome, descricao, thumbnail, valor_15d, valor_30d, valor_6m, valor_10d, caminho_pdf } = req.body;
+  if (!nome) {
+    return res.status(400).json({ success: false, message: 'Nome do curso é obrigatório.' });
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO cursos (nome, descricao, thumbnail, valor_15d, valor_30d, valor_6m, valor_10d, caminho_pdf)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [nome, descricao, thumbnail, valor_15d || 1.00, valor_30d || 0.01, valor_6m || 1200.00, valor_10d || 280.00, caminho_pdf]
+    );
+    res.status(201).json({ success: true, message: 'Curso criado com sucesso!', curso: result.rows[0] });
+  } catch (error) {
+    console.error('Erro ao criar curso:', error);
+    res.status(500).json({ success: false, message: 'Erro ao criar curso.' });
+  }
+});
+
+// Excluir curso (admin)
+app.delete('/api/cursos/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    // Remove aulas associadas primeiro
+    await pool.query('DELETE FROM aulas WHERE curso_id = $1', [id]);
+    // Remove avaliações associadas
+    await pool.query('DELETE FROM avaliacoes WHERE curso_id = $1', [id]);
+    // Remove o curso
+    const result = await pool.query('DELETE FROM cursos WHERE id = $1 RETURNING *', [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ success: false, message: 'Curso não encontrado.' });
+    }
+    res.json({ success: true, message: 'Curso excluído com sucesso!' });
+  } catch (error) {
+    console.error('Erro ao excluir curso:', error);
+    res.status(500).json({ success: false, message: 'Erro ao excluir curso.' });
+  }
+});
+
 // Atualiza informações de uma aula (admin) — inclui id do vídeo (Wistia)
 app.put('/api/aulas/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
